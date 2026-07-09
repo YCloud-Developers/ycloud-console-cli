@@ -2,10 +2,7 @@ use wiremock::{
     matchers::{body_json, header, method, path},
     Mock, MockServer, ResponseTemplate,
 };
-use yc_cli::{
-    config::Config,
-    http::DashboardClient,
-};
+use yc_cli::{config::Config, http::DashboardClient};
 
 #[tokio::test]
 async fn token_exchange_uses_backend_contract_and_saves_config_shape() {
@@ -109,9 +106,7 @@ async fn refresh_rotates_stored_tokens() {
     initial.save(&config_path).unwrap();
 
     let client = DashboardClient::new(server.uri()).unwrap();
-    yc_cli::auth::refresh(&client, &config_path)
-        .await
-        .unwrap();
+    yc_cli::auth::refresh(&client, &config_path).await.unwrap();
 
     let updated = Config::load(&config_path).unwrap();
     assert_eq!(updated.auth.access_token, "YCLI.new-access");

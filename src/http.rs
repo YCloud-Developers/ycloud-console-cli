@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use url::Url;
 
 use crate::pkce::PkcePair;
@@ -38,7 +38,11 @@ impl DashboardClient {
         Ok(url)
     }
 
-    pub async fn exchange_token(&self, code: &str, code_verifier: &str) -> Result<ApiEnvelope<TokenData>> {
+    pub async fn exchange_token(
+        &self,
+        code: &str,
+        code_verifier: &str,
+    ) -> Result<ApiEnvelope<TokenData>> {
         self.post_json(
             "/api/cli/auth/token",
             None,
@@ -73,11 +77,13 @@ impl DashboardClient {
     }
 
     pub async fn whoami(&self, access_token: &str) -> Result<ApiEnvelope<WhoamiData>> {
-        self.get_json("/api/cli/auth/whoami", Some(access_token)).await
+        self.get_json("/api/cli/auth/whoami", Some(access_token))
+            .await
     }
 
     pub async fn tenants(&self, access_token: &str) -> Result<ApiEnvelope<TenantsData>> {
-        self.get_json("/api/cli/auth/tenants/list", Some(access_token)).await
+        self.get_json("/api/cli/auth/tenants/list", Some(access_token))
+            .await
     }
 
     fn join(&self, path: &str) -> Result<Url> {
@@ -86,9 +92,18 @@ impl DashboardClient {
             .with_context(|| format!("failed to build dashboard api url for {path}"))
     }
 
-    async fn get_json<T: DeserializeOwned>(&self, path: &str, token: Option<&str>) -> Result<ApiEnvelope<T>> {
+    async fn get_json<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        token: Option<&str>,
+    ) -> Result<ApiEnvelope<T>> {
         let headers = headers(token)?;
-        let response = self.http.get(self.join(path)?).headers(headers).send().await?;
+        let response = self
+            .http
+            .get(self.join(path)?)
+            .headers(headers)
+            .send()
+            .await?;
         parse_response(response).await
     }
 
@@ -116,19 +131,23 @@ fn headers(token: Option<&str>) -> Result<HeaderMap> {
     if let Some(token) = token {
         headers.insert(
             AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {token}")).context("invalid access token header value")?,
+            HeaderValue::from_str(&format!("Bearer {token}"))
+                .context("invalid access token header value")?,
         );
     }
     Ok(headers)
 }
 
-async fn parse_response<T: DeserializeOwned>(response: reqwest::Response) -> Result<ApiEnvelope<T>> {
+async fn parse_response<T: DeserializeOwned>(
+    response: reqwest::Response,
+) -> Result<ApiEnvelope<T>> {
     let status = response.status();
     let text = response.text().await.unwrap_or_default();
     if !status.is_success() {
         anyhow::bail!("request failed with HTTP {status}: {text}");
     }
-    let envelope: ApiEnvelope<T> = serde_json::from_str(&text).context("failed to parse dashboard response")?;
+    let envelope: ApiEnvelope<T> =
+        serde_json::from_str(&text).context("failed to parse dashboard response")?;
     if envelope.code != 0 {
         anyhow::bail!(
             "dashboard api rejected request: code={}, message={}",
@@ -142,15 +161,14 @@ async fn parse_response<T: DeserializeOwned>(response: reqwest::Response) -> Res
 #[derive(Debug, Deserialize)]
 pub struct ApiEnvelope<T> {
     pub code: i64,
-    #[serde(default)]
     pub message: Option<String>,
-    #[serde(default)]
     pub data: Option<T>,
 }
 
 impl<T> ApiEnvelope<T> {
     pub fn require_data(self, label: &str) -> Result<T> {
-        self.data.with_context(|| format!("{label} response missing data"))
+        self.data
+            .with_context(|| format!("{label} response missing data"))
     }
 }
 
@@ -162,8 +180,20 @@ pub struct TokenData {
     pub access_token: String,
     #[serde(rename = "refreshToken")]
     pub refresh_token: String,
-    #[serde(rename = "recordId")]
+    #[serde(rename = "recordId", deserialize_with = "deserialize_string_or_number")]
     pub record_id: String,
+}
+
+fn deserialize_string_or_number<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::String(value) => Ok(value),
+        serde_json::Value::Number(value) => Ok(value.to_string()),
+        _ => Err(serde::de::Error::custom("expected string or number")),
+    }
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
@@ -214,7 +244,9 @@ mod tests {
     fn authorize_url_matches_backend_contract() {
         let client = DashboardClient::new("http://127.0.0.1:8036".to_string()).unwrap();
         let pkce = challenge_for_verifier("verifier");
-        let url = client.authorize_url("developers", "state-1", &pkce).unwrap();
+        let url = client
+            .authorize_url("developers", "state-1", &pkce)
+            .unwrap();
         let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
 
         assert_eq!(url.path(), "/api/cli/auth/authorize");
@@ -223,5 +255,18 @@ mod tests {
         assert_eq!(query.get("state"), Some(&"state-1".to_string()));
         assert_eq!(query.get("codeChallengeMethod"), Some(&"S256".to_string()));
         assert_eq!(query.get("codeChallenge"), Some(&pkce.code_challenge));
+    }
+
+    #[test]
+    fn token_data_accepts_numeric_record_id() {
+        let token: TokenData = serde_json::from_value(serde_json::json!({
+            "tokenType": "Bearer",
+            "accessToken": "YCLI.access",
+            "refreshToken": "YCLI.refresh",
+            "recordId": 1272676752573050880u64
+        }))
+        .unwrap();
+
+        assert_eq!(token.record_id, "1272676752573050880");
     }
 }

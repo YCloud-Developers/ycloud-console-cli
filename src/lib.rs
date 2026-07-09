@@ -16,8 +16,8 @@ pub async fn run() -> Result<()> {
 
     match cli.command {
         Command::Login(args) => {
-            let dashboard_url = dashboard_url_override
-                .unwrap_or_else(|| DEFAULT_DASHBOARD_URL.to_string());
+            let dashboard_url =
+                dashboard_url_override.unwrap_or_else(|| DEFAULT_DASHBOARD_URL.to_string());
             let client = http::DashboardClient::new(dashboard_url)?;
             auth::login(&client, &config_path, args).await
         }
@@ -42,7 +42,10 @@ pub async fn run() -> Result<()> {
     }
 }
 
-fn client_for_saved_profile(override_url: Option<String>, config_path: &std::path::Path) -> Result<http::DashboardClient> {
+fn client_for_saved_profile(
+    override_url: Option<String>,
+    config_path: &std::path::Path,
+) -> Result<http::DashboardClient> {
     let dashboard_url = match override_url {
         Some(url) => url,
         None => Config::load(config_path)?.dashboard.base_url,

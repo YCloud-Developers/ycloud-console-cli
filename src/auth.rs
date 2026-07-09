@@ -18,7 +18,9 @@ pub async fn login(client: &DashboardClient, config_path: &Path, args: LoginArgs
         Some(verifier) => pkce::challenge_for_verifier(&verifier),
         None => pkce::generate_pkce_pair(),
     };
-    let state = args.state.unwrap_or_else(|| format!("yc_cli_{}", random_state_suffix()));
+    let state = args
+        .state
+        .unwrap_or_else(|| format!("yc_cli_{}", random_state_suffix()));
     let authorize_url = client.authorize_url(&args.scope, &state, &pkce)?;
 
     println!("Open this URL in a logged-in Dashboard browser:");
@@ -52,13 +54,20 @@ pub async fn login(client: &DashboardClient, config_path: &Path, args: LoginArgs
         },
     };
 
-    if let Ok(identity) = client.whoami(&token.access_token).await.and_then(|r| r.require_data("whoami")) {
+    if let Ok(identity) = client
+        .whoami(&token.access_token)
+        .await
+        .and_then(|r| r.require_data("whoami"))
+    {
         config.auth.tenant_id = Some(identity.tenant_id);
         config.auth.user_id = Some(identity.user_id);
     }
 
     config.save(config_path)?;
-    println!("Login succeeded. Profile saved at {}.", config_path.display());
+    println!(
+        "Login succeeded. Profile saved at {}.",
+        config_path.display()
+    );
     Ok(())
 }
 
@@ -119,7 +128,9 @@ fn prompt(label: &str) -> Result<String> {
     print!("{label}");
     io::stdout().flush().context("failed to flush stdout")?;
     let mut line = String::new();
-    io::stdin().read_line(&mut line).context("failed to read stdin")?;
+    io::stdin()
+        .read_line(&mut line)
+        .context("failed to read stdin")?;
     Ok(line.trim().to_string())
 }
 

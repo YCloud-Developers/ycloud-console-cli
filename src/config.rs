@@ -29,16 +29,19 @@ impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let raw = fs::read_to_string(path)
             .with_context(|| format!("failed to read config at {}", path.display()))?;
-        toml::from_str(&raw).with_context(|| format!("failed to parse config at {}", path.display()))
+        toml::from_str(&raw)
+            .with_context(|| format!("failed to parse config at {}", path.display()))
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create config directory {}", parent.display()))?;
+            fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create config directory {}", parent.display())
+            })?;
         }
         let raw = toml::to_string_pretty(self).context("failed to serialize config")?;
-        fs::write(path, raw).with_context(|| format!("failed to write config at {}", path.display()))?;
+        fs::write(path, raw)
+            .with_context(|| format!("failed to write config at {}", path.display()))?;
         restrict_owner_only(path)?;
         Ok(())
     }
@@ -46,7 +49,8 @@ impl Config {
 
 pub fn remove(path: &Path) -> Result<()> {
     if path.exists() {
-        fs::remove_file(path).with_context(|| format!("failed to remove config at {}", path.display()))?;
+        fs::remove_file(path)
+            .with_context(|| format!("failed to remove config at {}", path.display()))?;
     }
     Ok(())
 }
