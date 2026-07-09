@@ -170,6 +170,7 @@ async fn parse_response<T: DeserializeOwned>(
 #[derive(Debug, Deserialize)]
 pub struct ApiEnvelope<T> {
     pub code: i64,
+    #[serde(alias = "msg")]
     pub message: Option<String>,
     pub data: Option<T>,
 }
@@ -287,5 +288,16 @@ mod tests {
         .unwrap();
 
         assert_eq!(token.record_id, "1272676752573050880");
+    }
+
+    #[test]
+    fn api_envelope_accepts_click_msg_field() {
+        let envelope: ApiEnvelope<serde_json::Value> = serde_json::from_value(serde_json::json!({
+            "code": -1,
+            "msg": "forbidden"
+        }))
+        .unwrap();
+
+        assert_eq!(envelope.message.as_deref(), Some("forbidden"));
     }
 }
