@@ -32,6 +32,10 @@ impl Cli {
 pub enum Command {
     Login(LoginArgs),
     Whoami,
+    Contacts {
+        #[command(subcommand)]
+        command: ContactsCommand,
+    },
     Tenants {
         #[command(subcommand)]
         command: TenantsCommand,
@@ -58,4 +62,21 @@ pub struct LoginArgs {
 
     #[arg(long)]
     pub state: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ContactsCommand {
+    List(ContactsListArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ContactsListArgs {
+    #[arg(long, default_value_t = 1)]
+    pub page_no: u32,
+
+    #[arg(long, default_value_t = 10)]
+    pub page_size: u32,
+
+    #[arg(long)]
+    pub condition: Option<String>,
 }

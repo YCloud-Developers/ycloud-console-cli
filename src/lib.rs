@@ -6,7 +6,7 @@ pub mod pkce;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Command, TenantsCommand, DEFAULT_DASHBOARD_URL};
+use cli::{Cli, Command, ContactsCommand, TenantsCommand, DEFAULT_DASHBOARD_URL};
 use config::Config;
 
 pub async fn run() -> Result<()> {
@@ -25,6 +25,12 @@ pub async fn run() -> Result<()> {
             let client = client_for_saved_profile(dashboard_url_override, &config_path)?;
             auth::whoami(&client, &config_path).await
         }
+        Command::Contacts { command } => match command {
+            ContactsCommand::List(args) => {
+                let client = client_for_saved_profile(dashboard_url_override, &config_path)?;
+                auth::contacts_list(&client, &config_path, args).await
+            }
+        },
         Command::Tenants { command } => match command {
             TenantsCommand::List => {
                 let client = client_for_saved_profile(dashboard_url_override, &config_path)?;

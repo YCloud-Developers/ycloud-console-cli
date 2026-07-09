@@ -113,3 +113,62 @@ async fn refresh_rotates_stored_tokens() {
     assert_eq!(updated.auth.refresh_token, "YCLI.new-refresh");
     assert_eq!(updated.auth.record_id, "record-2");
 }
+
+#[tokio::test]
+async fn contacts_list_calls_attila_web_business_endpoint() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/contacts/search"))
+        .and(header("authorization", "Bearer YCLI.access"))
+        .and(body_json(serde_json::json!({
+            "pageNo": 1,
+            "pageSize": 10
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "data": {
+                "pageNo": 1,
+                "pageSize": 10,
+                "totalCount": 1,
+                "records": [
+                    {
+                        "contactId": 1,
+                        "nickName": "test contact"
+                    }
+                ]
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    let initial = yc_cli::config::Config {
+        dashboard: yc_cli::config::DashboardConfig {
+            base_url: server.uri(),
+        },
+        auth: yc_cli::config::AuthConfig {
+            token_type: "Bearer".to_string(),
+            access_token: "YCLI.access".to_string(),
+            refresh_token: "YCLI.refresh".to_string(),
+            record_id: "1272676752573050880".to_string(),
+            scope: "developers".to_string(),
+            tenant_id: Some("tenant-1".to_string()),
+            user_id: Some("user-1".to_string()),
+        },
+    };
+    initial.save(&config_path).unwrap();
+
+    let client = DashboardClient::new(server.uri()).unwrap();
+    yc_cli::auth::contacts_list(
+        &client,
+        &config_path,
+        yc_cli::cli::ContactsListArgs {
+            page_no: 1,
+            page_size: 10,
+            condition: None,
+        },
+    )
+    .await
+    .unwrap();
+}

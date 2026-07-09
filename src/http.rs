@@ -86,6 +86,15 @@ impl DashboardClient {
             .await
     }
 
+    pub async fn contacts_search(
+        &self,
+        access_token: &str,
+        request: ContactsSearchRequest<'_>,
+    ) -> Result<ApiEnvelope<serde_json::Value>> {
+        self.post_json("/api/contacts/search", Some(access_token), &request)
+            .await
+    }
+
     fn join(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path.trim_start_matches('/'))
@@ -233,6 +242,16 @@ struct RefreshRequest<'a> {
 struct RevokeRequest<'a> {
     #[serde(rename = "recordId")]
     record_id: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ContactsSearchRequest<'a> {
+    #[serde(rename = "pageNo")]
+    pub page_no: u32,
+    #[serde(rename = "pageSize")]
+    pub page_size: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub condition: Option<&'a str>,
 }
 
 #[cfg(test)]

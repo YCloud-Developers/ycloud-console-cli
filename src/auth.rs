@@ -7,9 +7,9 @@ use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 
 use crate::{
-    cli::LoginArgs,
+    cli::{ContactsListArgs, LoginArgs},
     config::{self, AuthConfig, Config, DashboardConfig},
-    http::{DashboardClient, TokenData},
+    http::{ContactsSearchRequest, DashboardClient, TokenData},
     pkce,
 };
 
@@ -94,6 +94,27 @@ pub async fn tenants_list(client: &DashboardClient, config_path: &Path) -> Resul
         .await?
         .require_data("tenants/list")?;
     println!("{}", serde_json::to_string_pretty(&tenants.tenants)?);
+    Ok(())
+}
+
+pub async fn contacts_list(
+    client: &DashboardClient,
+    config_path: &Path,
+    args: ContactsListArgs,
+) -> Result<()> {
+    let config = Config::load(config_path)?;
+    let contacts = client
+        .contacts_search(
+            &config.auth.access_token,
+            ContactsSearchRequest {
+                page_no: args.page_no,
+                page_size: args.page_size,
+                condition: args.condition.as_deref(),
+            },
+        )
+        .await?
+        .require_data("contacts/search")?;
+    println!("{}", serde_json::to_string_pretty(&contacts)?);
     Ok(())
 }
 
