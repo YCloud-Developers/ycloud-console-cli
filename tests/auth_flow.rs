@@ -2,7 +2,7 @@ use wiremock::{
     matchers::{body_json, header, method, path},
     Mock, MockServer, ResponseTemplate,
 };
-use ycloud_dashboard_cli::{
+use yc_cli::{
     config::Config,
     http::DashboardClient,
 };
@@ -46,10 +46,10 @@ async fn token_exchange_uses_backend_contract_and_saves_config_shape() {
     let tmp = tempfile::tempdir().unwrap();
     let config_path = tmp.path().join("config.toml");
     let client = DashboardClient::new(server.uri()).unwrap();
-    ycloud_dashboard_cli::auth::login(
+    yc_cli::auth::login(
         &client,
         &config_path,
-        ycloud_dashboard_cli::cli::LoginArgs {
+        yc_cli::cli::LoginArgs {
             scope: "developers".to_string(),
             code: Some("code-1".to_string()),
             code_verifier: Some("verifier-1".to_string()),
@@ -92,11 +92,11 @@ async fn refresh_rotates_stored_tokens() {
 
     let tmp = tempfile::tempdir().unwrap();
     let config_path = tmp.path().join("config.toml");
-    let initial = ycloud_dashboard_cli::config::Config {
-        dashboard: ycloud_dashboard_cli::config::DashboardConfig {
+    let initial = yc_cli::config::Config {
+        dashboard: yc_cli::config::DashboardConfig {
             base_url: server.uri(),
         },
-        auth: ycloud_dashboard_cli::config::AuthConfig {
+        auth: yc_cli::config::AuthConfig {
             token_type: "Bearer".to_string(),
             access_token: "YCLI.old-access".to_string(),
             refresh_token: "YCLI.old-refresh".to_string(),
@@ -109,7 +109,7 @@ async fn refresh_rotates_stored_tokens() {
     initial.save(&config_path).unwrap();
 
     let client = DashboardClient::new(server.uri()).unwrap();
-    ycloud_dashboard_cli::auth::refresh(&client, &config_path)
+    yc_cli::auth::refresh(&client, &config_path)
         .await
         .unwrap();
 

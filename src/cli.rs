@@ -6,7 +6,7 @@ use clap::{Args, Parser, Subcommand};
 pub const DEFAULT_DASHBOARD_URL: &str = "http://127.0.0.1:8036";
 
 #[derive(Debug, Parser)]
-#[command(name = "yc", version, about = "YCloud Dashboard CLI")]
+#[command(name = "yc", version, about = "YCloud Console CLI")]
 pub struct Cli {
     #[arg(long, global = true, env = "YC_DASHBOARD_URL")]
     pub dashboard_url: Option<String>,

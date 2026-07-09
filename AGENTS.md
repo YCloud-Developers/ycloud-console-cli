@@ -2,7 +2,7 @@
 
 ## Project Scope
 
-This is the Dashboard-oriented YCloud CLI. It is separate from the existing OpenAPI/API-key `ycloud-cli` project and must not reuse `~/.ycli/config.toml` or API-key authentication.
+This is the Console/Dashboard-oriented YCloud CLI. It is separate from the existing OpenAPI/API-key `ycloud-cli` project and must not reuse `~/.ycli/config.toml` or API-key authentication.
 
 ## Build and Test
 

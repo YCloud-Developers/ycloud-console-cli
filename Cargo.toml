@@ -1,8 +1,8 @@
 [package]
-name = "ycloud-dashboard-cli"
+name = "yc-cli"
 version = "0.1.0"
 edition = "2021"
-description = "Dashboard-oriented YCloud CLI using browser grant auth"
+description = "Console-oriented YCloud CLI using browser grant auth"
 
 [[bin]]
 name = "yc"

@@ -1,12 +1,12 @@
-# yc - YCloud Dashboard CLI
+# yc - YCloud Console CLI
 
-`yc` is the Dashboard-oriented YCloud CLI. It is intentionally separate from the existing `ycli` OpenAPI/API-key CLI.
+`yc` is the Console/Dashboard-oriented YCloud CLI. It is intentionally separate from the existing `ycli` OpenAPI/API-key CLI.
 
 ## Scope
 
 - `yc login` uses Dashboard browser grant + PKCE and stores `YCLI.` tokens.
-- `yc whoami` reads the current Dashboard CLI identity.
-- `yc tenants list` lists tenants available to the current Dashboard CLI token.
+- `yc whoami` reads the current Console CLI identity.
+- `yc tenants list` lists tenants available to the current Console CLI token.
 - `yc refresh` rotates the refresh token.
 - `yc logout` revokes the current token and removes the local profile.
 
