@@ -1,11 +1,16 @@
 use std::{
+    io::Read,
     io::{self, Write},
+    net::{TcpListener, TcpStream},
     path::Path,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    process::Command,
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use url::Url;
 
 use crate::{
     cli::{
@@ -28,16 +33,46 @@ pub async fn login(client: &DashboardClient, config_path: &Path, args: LoginArgs
     let state = args
         .state
         .unwrap_or_else(|| format!("yc_cli_{}", random_state_suffix()));
-    let authorize_url = client.authorize_url(&args.scope, &state, &pkce)?;
-
-    println!("Open this URL in a logged-in Dashboard browser:");
-    println!("{authorize_url}");
-    println!();
-    println!("Copy data.code from the JSON response and paste it below.");
+    let manual = args.manual || args.code.is_some();
+    let (authorize_url, listener) = if manual {
+        (
+            client.authorize_url(&args.scope, &state, &pkce, None)?,
+            None,
+        )
+    } else {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .context("failed to bind localhost callback listener")?;
+        let redirect_uri = format!("http://{}/callback", listener.local_addr()?);
+        (
+            client.authorize_url(&args.scope, &state, &pkce, Some(&redirect_uri))?,
+            Some(listener),
+        )
+    };
 
     let code = match args.code {
         Some(code) => code,
-        None => prompt("Authorization code: ")?,
+        None if manual => {
+            println!("Open this URL in a logged-in Dashboard browser:");
+            println!("{authorize_url}");
+            println!();
+            println!("Copy data.code from the JSON response and paste it below.");
+            prompt("Authorization code: ")?
+        }
+        None => {
+            println!("Opening browser for Dashboard authorization:");
+            println!("{authorize_url}");
+            println!();
+            if let Err(error) = open_browser(authorize_url.as_str()) {
+                println!("Could not open browser automatically: {error:#}");
+                println!("Open the URL above in a logged-in Dashboard browser.");
+            }
+            println!("Waiting for browser callback on localhost...");
+            wait_for_callback(
+                listener.expect("listener must exist"),
+                &state,
+                Duration::from_secs(300),
+            )?
+        }
     };
 
     let token = client
@@ -75,6 +110,116 @@ pub async fn login(client: &DashboardClient, config_path: &Path, args: LoginArgs
         "Login succeeded. Profile saved at {}.",
         config_path.display()
     );
+    Ok(())
+}
+
+fn wait_for_callback(
+    listener: TcpListener,
+    expected_state: &str,
+    timeout: Duration,
+) -> Result<String> {
+    listener
+        .set_nonblocking(true)
+        .context("failed to configure localhost callback listener")?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        match listener.accept() {
+            Ok((mut stream, _)) => return handle_callback(&mut stream, expected_state),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    anyhow::bail!("timed out waiting for browser callback");
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            Err(error) => return Err(error).context("failed to accept browser callback"),
+        }
+    }
+}
+
+fn handle_callback(stream: &mut TcpStream, expected_state: &str) -> Result<String> {
+    let mut buffer = [0u8; 4096];
+    let size = stream
+        .read(&mut buffer)
+        .context("failed to read browser callback")?;
+    let request = String::from_utf8_lossy(&buffer[..size]);
+    let request_line = request
+        .lines()
+        .next()
+        .context("browser callback was empty")?;
+    let target = request_line
+        .split_whitespace()
+        .nth(1)
+        .context("browser callback request target is missing")?;
+    let url = Url::parse(&format!("http://127.0.0.1{target}"))
+        .context("failed to parse browser callback URL")?;
+
+    if url.path() != "/callback" {
+        write_callback_response(stream, 404, "yc login callback not found")?;
+        anyhow::bail!("unexpected browser callback path: {}", url.path());
+    }
+
+    let mut code = None;
+    let mut state = None;
+    let mut error = None;
+    for (key, value) in url.query_pairs() {
+        match key.as_ref() {
+            "code" => code = Some(value.into_owned()),
+            "state" => state = Some(value.into_owned()),
+            "error" => error = Some(value.into_owned()),
+            _ => {}
+        }
+    }
+
+    if let Some(error) = error {
+        write_callback_response(stream, 400, "yc login authorization failed")?;
+        anyhow::bail!("dashboard authorization failed: {error}");
+    }
+    if state.as_deref() != Some(expected_state) {
+        write_callback_response(stream, 400, "yc login state mismatch")?;
+        anyhow::bail!("browser callback state does not match login request");
+    }
+    let code = code.context("browser callback did not include authorization code")?;
+    write_callback_response(
+        stream,
+        200,
+        "yc login succeeded. You can close this browser tab.",
+    )?;
+    Ok(code)
+}
+
+fn write_callback_response(stream: &mut TcpStream, status: u16, message: &str) -> Result<()> {
+    let reason = match status {
+        200 => "OK",
+        400 => "Bad Request",
+        404 => "Not Found",
+        _ => "OK",
+    };
+    let body = format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>yc login</title></head><body><p>{}</p></body></html>",
+        message
+    );
+    let response = format!(
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.as_bytes().len(),
+        body
+    );
+    stream
+        .write_all(response.as_bytes())
+        .context("failed to write browser callback response")
+}
+
+fn open_browser(url: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    let status = Command::new("open").arg(url).status();
+    #[cfg(target_os = "windows")]
+    let status = Command::new("cmd").args(["/C", "start", "", url]).status();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let status = Command::new("xdg-open").arg(url).status();
+
+    let status = status.context("failed to start browser command")?;
+    if !status.success() {
+        anyhow::bail!("browser command exited with status {status}");
+    }
     Ok(())
 }
 

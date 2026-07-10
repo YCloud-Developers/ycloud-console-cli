@@ -89,6 +89,12 @@ pub struct LoginArgs {
 
     #[arg(long, help = "OAuth state used for scripted login tests")]
     pub state: Option<String>,
+
+    #[arg(
+        long,
+        help = "Use manual copy/paste authorization code flow instead of localhost callback"
+    )]
+    pub manual: bool,
 }
 
 #[derive(Debug, Subcommand)]

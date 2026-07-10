@@ -4,14 +4,14 @@
 
 ## Scope
 
-- `yc login` uses Dashboard browser grant + PKCE and stores `YCLI.` tokens.
+- `yc login` uses Dashboard browser grant + PKCE, receives the code through a localhost callback by default, and stores `YCLI.` tokens.
 - `yc whoami` reads the current Console CLI identity.
 - `yc tenants list` lists tenants available to the current Console CLI token.
 - `yc analytics ...` calls the same Dashboard analytics APIs used by `/app/dashboard/analytics`.
 - `yc refresh` rotates the refresh token.
 - `yc logout` revokes the current token and removes the local profile.
 
-Current backend behavior returns an authorization code as JSON from `/api/cli/auth/authorize`, so the first implementation uses copy-paste authorization code input.
+Manual copy-paste authorization code input is still available with `yc login --manual` for terminals that cannot receive a localhost browser callback.
 
 ## Local Test Against Dashboard
 
@@ -27,7 +27,15 @@ Then run:
 cargo run -- login --dashboard-url http://127.0.0.1:8036 --scope developers
 ```
 
-Open the printed URL in a browser that is already logged in to Dashboard, copy the returned `data.code`, then paste it into the CLI prompt.
+The CLI opens a browser and waits for Dashboard to redirect back to `http://127.0.0.1:<port>/callback`.
+
+If automatic browser login is not available, use the manual fallback:
+
+```bash
+cargo run -- login --dashboard-url http://127.0.0.1:8036 --scope developers --manual
+```
+
+In manual mode, open the printed URL in a browser that is already logged in to Dashboard, copy the returned `data.code`, then paste it into the CLI prompt.
 
 ## Commands
 

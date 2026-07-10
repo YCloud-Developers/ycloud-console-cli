@@ -27,14 +27,25 @@ impl DashboardClient {
         self.base_url.as_str().trim_end_matches('/').to_string()
     }
 
-    pub fn authorize_url(&self, scope: &str, state: &str, pkce: &PkcePair) -> Result<Url> {
+    pub fn authorize_url(
+        &self,
+        scope: &str,
+        state: &str,
+        pkce: &PkcePair,
+        redirect_uri: Option<&str>,
+    ) -> Result<Url> {
         let mut url = self.join("/api/cli/auth/authorize")?;
-        url.query_pairs_mut()
+        let mut query = url.query_pairs_mut();
+        query
             .append_pair("responseType", "code")
             .append_pair("scope", scope)
             .append_pair("state", state)
             .append_pair("codeChallenge", &pkce.code_challenge)
             .append_pair("codeChallengeMethod", "S256");
+        if let Some(redirect_uri) = redirect_uri {
+            query.append_pair("redirectUri", redirect_uri);
+        }
+        drop(query);
         Ok(url)
     }
 
@@ -407,7 +418,7 @@ mod tests {
         let client = DashboardClient::new("http://127.0.0.1:8036".to_string()).unwrap();
         let pkce = challenge_for_verifier("verifier");
         let url = client
-            .authorize_url("developers", "state-1", &pkce)
+            .authorize_url("developers", "state-1", &pkce, None)
             .unwrap();
         let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
 
@@ -417,6 +428,31 @@ mod tests {
         assert_eq!(query.get("state"), Some(&"state-1".to_string()));
         assert_eq!(query.get("codeChallengeMethod"), Some(&"S256".to_string()));
         assert_eq!(query.get("codeChallenge"), Some(&pkce.code_challenge));
+        assert_eq!(query.get("redirectUri"), None);
+    }
+
+    #[test]
+    fn authorize_url_includes_redirect_uri_when_present() {
+        let client = DashboardClient::new("https://dashboard.example".to_string()).unwrap();
+        let pkce = challenge_for_verifier("verifier");
+
+        let url = client
+            .authorize_url(
+                "developers",
+                "state-1",
+                &pkce,
+                Some("http://127.0.0.1:39123/callback"),
+            )
+            .unwrap();
+        let query: std::collections::HashMap<_, _> = url
+            .query_pairs()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+
+        assert_eq!(
+            query.get("redirectUri"),
+            Some(&"http://127.0.0.1:39123/callback".to_string())
+        );
     }
 
     #[test]

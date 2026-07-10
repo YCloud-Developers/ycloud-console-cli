@@ -51,6 +51,7 @@ async fn token_exchange_uses_backend_contract_and_saves_config_shape() {
             code: Some("code-1".to_string()),
             code_verifier: Some("verifier-1".to_string()),
             state: Some("state-1".to_string()),
+            manual: false,
         },
     )
     .await
