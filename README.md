@@ -73,6 +73,24 @@ yc analytics logs --start-time 1782921600000 --end-time 1783526400000 --directio
 yc analytics calling-logs --start-time 1782921600000 --end-time 1783526400000 --directions BUSINESS_INITIATED --sources CALLING --status COMPLETED
 ```
 
+## Online Smoke
+
+The P0 read-only Dashboard CLI commands are merged into `main` and can be tested against online after `yc login`:
+
+```bash
+yc --dashboard-url https://www.ycloud.com whoami
+yc --dashboard-url https://www.ycloud.com integrations status
+yc --dashboard-url https://www.ycloud.com contacts metadata
+```
+
+The expected result is:
+
+- `whoami` returns the current Dashboard CLI user, tenant, and granted permissions.
+- `integrations status` returns enabled Dashboard integrations.
+- `contacts metadata` returns contact `segmentFilters`, `segments`, `sources`, and `tags`.
+
+Backend online release verified on 2026-07-10 with `yunpian-attila-web` build `#816`.
+
 ## Config
 
 Config is stored at `~/.yc/config.toml`.
