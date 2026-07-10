@@ -95,6 +95,75 @@ impl DashboardClient {
             .await
     }
 
+    pub async fn whatsapp_analytics_outline(
+        &self,
+        access_token: &str,
+        request: AnalyticsRangeRequest,
+    ) -> Result<ApiEnvelope<serde_json::Value>> {
+        let path = format!(
+            "/api/whatsapp/analytics/outline?startTime={}&endTime={}",
+            request.start_time, request.end_time
+        );
+        self.get_json(&path, Some(access_token)).await
+    }
+
+    pub async fn whatsapp_delivery_analytics(
+        &self,
+        access_token: &str,
+        request: &AnalyticsOverviewRequest<'_>,
+    ) -> Result<ApiEnvelope<serde_json::Value>> {
+        self.post_json(
+            "/api/whatsapp/analytics/deliveryAnalytics",
+            Some(access_token),
+            request,
+        )
+        .await
+    }
+
+    pub async fn whatsapp_message_detail(
+        &self,
+        access_token: &str,
+        request: &AnalyticsOverviewRequest<'_>,
+    ) -> Result<ApiEnvelope<serde_json::Value>> {
+        self.post_json(
+            "/api/whatsapp/analytics/messageDetail",
+            Some(access_token),
+            request,
+        )
+        .await
+    }
+
+    pub async fn whatsapp_failure_reason_share(
+        &self,
+        access_token: &str,
+        request: &AnalyticsOverviewRequest<'_>,
+    ) -> Result<ApiEnvelope<serde_json::Value>> {
+        self.post_json(
+            "/api/whatsapp/analytics/failureReasonShare",
+            Some(access_token),
+            request,
+        )
+        .await
+    }
+
+    pub async fn whatsapp_logs_search(
+        &self,
+        access_token: &str,
+        request: &AnalyticsLogsRequest<'_>,
+    ) -> Result<ApiEnvelope<serde_json::Value>> {
+        self.post_json("/api/whatsapp/message/search", Some(access_token), request)
+            .await
+    }
+
+    pub async fn calling_logs_search(
+        &self,
+        access_token: &str,
+        request: &AnalyticsCallingLogsRequest<'_>,
+    ) -> Result<ApiEnvelope<serde_json::Value>> {
+        self.post_json("/api/calling/logs/search", Some(access_token), request)
+            .await
+    }
+
     fn join(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path.trim_start_matches('/'))
@@ -253,6 +322,79 @@ pub struct ContactsSearchRequest<'a> {
     pub page_size: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub condition: Option<&'a str>,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct AnalyticsRangeRequest {
+    pub start_time: i64,
+    pub end_time: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AnalyticsOverviewRequest<'a> {
+    #[serde(rename = "startTime")]
+    pub start_time: i64,
+    #[serde(rename = "endTime")]
+    pub end_time: i64,
+    pub timezone: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<&'a str>,
+    #[serde(rename = "regionCode", skip_serializing_if = "Option::is_none")]
+    pub region_code: Option<&'a str>,
+    #[serde(rename = "messageCategory", skip_serializing_if = "Option::is_none")]
+    pub message_category: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AnalyticsLogsRequest<'a> {
+    pub direction: &'a str,
+    #[serde(rename = "startTime")]
+    pub start_time: i64,
+    #[serde(rename = "endTime")]
+    pub end_time: i64,
+    #[serde(rename = "pageNo")]
+    pub page_no: u32,
+    #[serde(rename = "pageSize")]
+    pub page_size: u32,
+    pub timezone: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub condition: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<&'a str>,
+    #[serde(rename = "businessPhones", skip_serializing_if = "Vec::is_empty")]
+    pub business_phones: Vec<&'a str>,
+    #[serde(rename = "toRegionCodes", skip_serializing_if = "Vec::is_empty")]
+    pub to_region_codes: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub smb: Option<bool>,
+    #[serde(rename = "pricingCategory", skip_serializing_if = "Vec::is_empty")]
+    pub pricing_category: Vec<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AnalyticsCallingLogsRequest<'a> {
+    #[serde(rename = "startTime")]
+    pub start_time: i64,
+    #[serde(rename = "endTime")]
+    pub end_time: i64,
+    #[serde(rename = "pageNo")]
+    pub page_no: u32,
+    #[serde(rename = "pageSize")]
+    pub page_size: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub condition: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub directions: Vec<&'a str>,
+    #[serde(rename = "regionCodes", skip_serializing_if = "Vec::is_empty")]
+    pub region_codes: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub status: Vec<&'a str>,
+    #[serde(rename = "phoneNumberIds", skip_serializing_if = "Vec::is_empty")]
+    pub phone_number_ids: Vec<&'a str>,
 }
 
 #[cfg(test)]

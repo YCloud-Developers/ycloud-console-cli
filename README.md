@@ -7,6 +7,7 @@
 - `yc login` uses Dashboard browser grant + PKCE and stores `YCLI.` tokens.
 - `yc whoami` reads the current Console CLI identity.
 - `yc tenants list` lists tenants available to the current Console CLI token.
+- `yc analytics ...` calls the same Dashboard analytics APIs used by `/app/dashboard/analytics`.
 - `yc refresh` rotates the refresh token.
 - `yc logout` revokes the current token and removes the local profile.
 
@@ -34,8 +35,30 @@ Open the printed URL in a browser that is already logged in to Dashboard, copy t
 yc login --dashboard-url http://127.0.0.1:8036 --scope developers
 yc whoami
 yc tenants list
+yc analytics outline
+yc analytics overview
+yc analytics logs --page-no 1 --page-size 20
+yc analytics calling-logs --page-no 1 --page-size 20
 yc refresh
 yc logout
+```
+
+For dev-blue analytics testing:
+
+```bash
+cargo run -- login --dashboard-url https://www-dev-blue.ycloud.com --scope "developers whatsapp:manager:analytics"
+cargo run -- analytics outline
+cargo run -- analytics overview --timezone GMT+8
+cargo run -- analytics logs --page-no 1 --page-size 10
+cargo run -- analytics calling-logs --page-no 1 --page-size 10
+```
+
+Analytics commands default to the last 7 days. Use millisecond timestamps to pin the same range as the Dashboard page:
+
+```bash
+yc analytics overview --start-time 1782921600000 --end-time 1783526400000 --from 8613800138000 --region-code CN --message-category marketing,utility
+yc analytics logs --start-time 1782921600000 --end-time 1783526400000 --direction OutBound --status sent,delivered --source "WhatsApp Business API"
+yc analytics calling-logs --start-time 1782921600000 --end-time 1783526400000 --directions BUSINESS_INITIATED --sources CALLING --status COMPLETED
 ```
 
 ## Config

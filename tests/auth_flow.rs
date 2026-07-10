@@ -172,3 +172,190 @@ async fn contacts_list_calls_attila_web_business_endpoint() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn analytics_overview_calls_dashboard_page_endpoints() {
+    let server = MockServer::start().await;
+    let expected_body = serde_json::json!({
+        "startTime": 1782921600000_i64,
+        "endTime": 1783526400000_i64,
+        "timezone": "GMT+8",
+        "from": "8613800138000",
+        "regionCode": "CN",
+        "messageCategory": "marketing,utility"
+    });
+    for endpoint in [
+        "/api/whatsapp/analytics/deliveryAnalytics",
+        "/api/whatsapp/analytics/messageDetail",
+        "/api/whatsapp/analytics/failureReasonShare",
+    ] {
+        Mock::given(method("POST"))
+            .and(path(endpoint))
+            .and(header("authorization", "Bearer YCLI.access"))
+            .and(body_json(expected_body.clone()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "code": 0,
+                "data": {
+                    "endpoint": endpoint
+                }
+            })))
+            .mount(&server)
+            .await;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    saved_config(server.uri()).save(&config_path).unwrap();
+
+    let client = DashboardClient::new(server.uri()).unwrap();
+    yc_cli::auth::analytics_overview(
+        &client,
+        &config_path,
+        yc_cli::cli::AnalyticsOverviewArgs {
+            range: yc_cli::cli::AnalyticsRangeArgs {
+                start_time: Some(1782921600000),
+                end_time: Some(1783526400000),
+            },
+            timezone: "GMT+8".to_string(),
+            from: Some("8613800138000".to_string()),
+            region_code: Some("CN".to_string()),
+            message_category: Some("marketing,utility".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn analytics_logs_calls_dashboard_message_search_endpoint() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/whatsapp/message/search"))
+        .and(header("authorization", "Bearer YCLI.access"))
+        .and(body_json(serde_json::json!({
+            "direction": "OutBound",
+            "startTime": 1782921600000_i64,
+            "endTime": 1783526400000_i64,
+            "pageNo": 1,
+            "pageSize": 20,
+            "timezone": "GMT+8",
+            "condition": "test",
+            "businessPhones": ["8613800138000"],
+            "toRegionCodes": ["CN"],
+            "status": "sent,delivered",
+            "smb": false,
+            "pricingCategory": ["marketing"]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "data": {
+                "records": [],
+                "pagin": {
+                    "totalCount": 0
+                }
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    saved_config(server.uri()).save(&config_path).unwrap();
+
+    let client = DashboardClient::new(server.uri()).unwrap();
+    yc_cli::auth::analytics_logs(
+        &client,
+        &config_path,
+        yc_cli::cli::AnalyticsLogsArgs {
+            range: yc_cli::cli::AnalyticsRangeArgs {
+                start_time: Some(1782921600000),
+                end_time: Some(1783526400000),
+            },
+            page_no: 1,
+            page_size: 20,
+            condition: Some("test".to_string()),
+            direction: "OutBound".to_string(),
+            from: None,
+            business_phones: vec!["8613800138000".to_string()],
+            to_region_codes: vec!["CN".to_string()],
+            status: Some("sent,delivered".to_string()),
+            source: Some("WhatsApp Business API".to_string()),
+            pricing_category: vec!["marketing".to_string()],
+            timezone: "GMT+8".to_string(),
+        },
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn analytics_calling_logs_calls_dashboard_calling_search_endpoint() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/calling/logs/search"))
+        .and(header("authorization", "Bearer YCLI.access"))
+        .and(body_json(serde_json::json!({
+            "startTime": 1782921600000_i64,
+            "endTime": 1783526400000_i64,
+            "pageNo": 1,
+            "pageSize": 20,
+            "condition": "test",
+            "directions": ["BUSINESS_INITIATED"],
+            "regionCodes": ["CN"],
+            "sources": ["CALLING"],
+            "status": ["COMPLETED"],
+            "phoneNumberIds": ["phone-id-1"]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "data": {
+                "records": [],
+                "pagin": {
+                    "totalCount": 0
+                }
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    saved_config(server.uri()).save(&config_path).unwrap();
+
+    let client = DashboardClient::new(server.uri()).unwrap();
+    yc_cli::auth::analytics_calling_logs(
+        &client,
+        &config_path,
+        yc_cli::cli::AnalyticsCallingLogsArgs {
+            range: yc_cli::cli::AnalyticsRangeArgs {
+                start_time: Some(1782921600000),
+                end_time: Some(1783526400000),
+            },
+            page_no: 1,
+            page_size: 20,
+            condition: Some("test".to_string()),
+            directions: vec!["BUSINESS_INITIATED".to_string()],
+            region_codes: vec!["CN".to_string()],
+            sources: vec!["CALLING".to_string()],
+            status: vec!["COMPLETED".to_string()],
+            phone_number_ids: vec!["phone-id-1".to_string()],
+        },
+    )
+    .await
+    .unwrap();
+}
+
+fn saved_config(base_url: String) -> yc_cli::config::Config {
+    yc_cli::config::Config {
+        dashboard: yc_cli::config::DashboardConfig { base_url },
+        auth: yc_cli::config::AuthConfig {
+            token_type: "Bearer".to_string(),
+            access_token: "YCLI.access".to_string(),
+            refresh_token: "YCLI.refresh".to_string(),
+            record_id: "1272676752573050880".to_string(),
+            scope: "developers whatsapp:manager:analytics".to_string(),
+            tenant_id: Some("tenant-1".to_string()),
+            user_id: Some("user-1".to_string()),
+        },
+    }
+}
