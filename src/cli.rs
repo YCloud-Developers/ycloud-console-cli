@@ -44,6 +44,11 @@ pub enum Command {
         #[command(subcommand)]
         command: ContactsCommand,
     },
+    #[command(about = "Query Dashboard integration status APIs")]
+    Integrations {
+        #[command(subcommand)]
+        command: IntegrationsCommand,
+    },
     #[command(about = "Query tenants available to the current Dashboard CLI token")]
     Tenants {
         #[command(subcommand)]
@@ -100,6 +105,14 @@ pub struct LoginArgs {
 #[derive(Debug, Subcommand)]
 pub enum ContactsCommand {
     List(ContactsListArgs),
+    #[command(about = "List contact sources, tags, segments, and segment filters")]
+    Metadata,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum IntegrationsCommand {
+    #[command(about = "List enabled status for Dashboard integrations")]
+    Status,
 }
 
 #[derive(Debug, Args)]

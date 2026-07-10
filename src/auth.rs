@@ -270,6 +270,26 @@ pub async fn contacts_list(
     Ok(())
 }
 
+pub async fn contacts_metadata(client: &DashboardClient, config_path: &Path) -> Result<()> {
+    let config = Config::load(config_path)?;
+    let metadata = client
+        .contacts_metadata(&config.auth.access_token)
+        .await?
+        .require_data("contacts/metadata")?;
+    println!("{}", serde_json::to_string_pretty(&metadata)?);
+    Ok(())
+}
+
+pub async fn integrations_status(client: &DashboardClient, config_path: &Path) -> Result<()> {
+    let config = Config::load(config_path)?;
+    let statuses = client
+        .integrations_status(&config.auth.access_token)
+        .await?
+        .require_data("integrations/status")?;
+    println!("{}", serde_json::to_string_pretty(&statuses)?);
+    Ok(())
+}
+
 pub async fn analytics_outline(
     client: &DashboardClient,
     config_path: &Path,

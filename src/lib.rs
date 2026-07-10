@@ -6,7 +6,10 @@ pub mod pkce;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{AnalyticsCommand, Cli, Command, ContactsCommand, TenantsCommand, DEFAULT_DASHBOARD_URL};
+use cli::{
+    AnalyticsCommand, Cli, Command, ContactsCommand, IntegrationsCommand, TenantsCommand,
+    DEFAULT_DASHBOARD_URL,
+};
 use config::Config;
 
 pub async fn run() -> Result<()> {
@@ -46,6 +49,16 @@ pub async fn run() -> Result<()> {
             ContactsCommand::List(args) => {
                 let client = client_for_saved_profile(dashboard_url_override, &config_path)?;
                 auth::contacts_list(&client, &config_path, args).await
+            }
+            ContactsCommand::Metadata => {
+                let client = client_for_saved_profile(dashboard_url_override, &config_path)?;
+                auth::contacts_metadata(&client, &config_path).await
+            }
+        },
+        Command::Integrations { command } => match command {
+            IntegrationsCommand::Status => {
+                let client = client_for_saved_profile(dashboard_url_override, &config_path)?;
+                auth::integrations_status(&client, &config_path).await
             }
         },
         Command::Tenants { command } => match command {

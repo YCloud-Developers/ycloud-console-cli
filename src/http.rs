@@ -106,6 +106,22 @@ impl DashboardClient {
             .await
     }
 
+    pub async fn contacts_metadata(
+        &self,
+        access_token: &str,
+    ) -> Result<ApiEnvelope<serde_json::Value>> {
+        self.get_json("/api/cli/read/contacts/metadata", Some(access_token))
+            .await
+    }
+
+    pub async fn integrations_status(
+        &self,
+        access_token: &str,
+    ) -> Result<ApiEnvelope<serde_json::Value>> {
+        self.get_json("/api/cli/read/integrations/status", Some(access_token))
+            .await
+    }
+
     pub async fn whatsapp_analytics_outline(
         &self,
         access_token: &str,

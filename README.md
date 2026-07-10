@@ -7,6 +7,8 @@
 - `yc login` uses Dashboard browser grant + PKCE, receives the code through a localhost callback by default, and stores `YCLI.` tokens.
 - `yc whoami` reads the current Console CLI identity.
 - `yc tenants list` lists tenants available to the current Console CLI token.
+- `yc integrations status` lists Dashboard integration enabled status through the CLI read-only adapter.
+- `yc contacts metadata` lists contact sources, tags, segments, and segment filters through the CLI read-only adapter.
 - `yc analytics ...` calls the same Dashboard analytics APIs used by `/app/dashboard/analytics`.
 - `yc refresh` rotates the refresh token.
 - `yc logout` revokes the current token and removes the local profile.
@@ -43,6 +45,8 @@ In manual mode, open the printed URL in a browser that is already logged in to D
 yc login --dashboard-url http://127.0.0.1:8036 --scope developers
 yc whoami
 yc tenants list
+yc integrations status
+yc contacts metadata
 yc analytics outline
 yc analytics overview
 yc analytics logs --page-no 1 --page-size 20

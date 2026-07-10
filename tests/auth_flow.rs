@@ -175,6 +175,68 @@ async fn contacts_list_calls_attila_web_business_endpoint() {
 }
 
 #[tokio::test]
+async fn contacts_metadata_calls_cli_readonly_endpoint() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/cli/read/contacts/metadata"))
+        .and(header("authorization", "Bearer YCLI.access"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "data": {
+                "sources": ["whatsapp"],
+                "tags": [
+                    {
+                        "id": "tag-1",
+                        "name": "VIP"
+                    }
+                ],
+                "segments": [],
+                "segmentFilters": []
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    saved_config(server.uri()).save(&config_path).unwrap();
+
+    let client = DashboardClient::new(server.uri()).unwrap();
+    yc_cli::auth::contacts_metadata(&client, &config_path)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn integrations_status_calls_cli_readonly_endpoint() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/cli/read/integrations/status"))
+        .and(header("authorization", "Bearer YCLI.access"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "data": [
+                {
+                    "type": "SHOP",
+                    "integration": "SHOPIFY",
+                    "status": "ENABLED"
+                }
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    saved_config(server.uri()).save(&config_path).unwrap();
+
+    let client = DashboardClient::new(server.uri()).unwrap();
+    yc_cli::auth::integrations_status(&client, &config_path)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn analytics_overview_calls_dashboard_page_endpoints() {
     let server = MockServer::start().await;
     let expected_body = serde_json::json!({
