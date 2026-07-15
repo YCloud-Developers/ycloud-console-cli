@@ -1,4 +1,10 @@
-use std::{io::Write, net::TcpListener, thread, time::Duration};
+use std::{
+    io::{Read, Write},
+    net::TcpListener,
+    sync::mpsc,
+    thread,
+    time::Duration,
+};
 use wiremock::{
     matchers::{body_json, header, method, path},
     Mock, MockServer, ResponseTemplate,
@@ -459,21 +465,34 @@ async fn request_times_out_instead_of_waiting_indefinitely() {
         DashboardClient::new_with_timeout(server.uri(), Duration::from_millis(25)).unwrap();
     let error = client.tenants("YCLI.access").await.unwrap_err();
 
-    assert!(error.to_string().to_lowercase().contains("timed out"));
+    assert!(
+        error.to_string().to_lowercase().contains("timed out"),
+        "unexpected error: {error:#}"
+    );
 }
 
 #[tokio::test]
 async fn response_body_timeout_is_not_hidden_as_a_parse_error() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
+    let (release_tx, release_rx) = mpsc::channel();
     let server = thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            let count = stream.read(&mut buffer).unwrap();
+            if count == 0 {
+                break;
+            }
+            request.extend_from_slice(&buffer[..count]);
+        }
         stream
             .write_all(
                 b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{",
             )
             .unwrap();
-        thread::sleep(Duration::from_millis(200));
+        release_rx.recv().unwrap();
     });
 
     let client =
@@ -481,6 +500,10 @@ async fn response_body_timeout_is_not_hidden_as_a_parse_error() {
             .unwrap();
     let error = client.tenants("YCLI.access").await.unwrap_err();
 
-    assert!(error.to_string().to_lowercase().contains("timed out"));
+    release_tx.send(()).unwrap();
+    assert!(
+        error.to_string().to_lowercase().contains("timed out"),
+        "unexpected error: {error:#}"
+    );
     server.join().unwrap();
 }

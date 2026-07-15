@@ -10,6 +10,7 @@ use crate::pkce::PkcePair;
 pub struct DashboardClient {
     http: reqwest::Client,
     base_url: Url,
+    timeout: Duration,
 }
 
 impl DashboardClient {
@@ -24,10 +25,10 @@ impl DashboardClient {
         }
         Ok(Self {
             http: reqwest::Client::builder()
-                .timeout(timeout)
                 .build()
                 .context("failed to build dashboard HTTP client")?,
             base_url: parsed,
+            timeout,
         })
     }
 
@@ -227,14 +228,19 @@ impl DashboardClient {
         token: Option<&str>,
     ) -> Result<ApiEnvelope<T>> {
         let headers = headers(token)?;
-        let response = self
-            .http
-            .get(self.join(path)?)
-            .headers(headers)
-            .send()
+        let request = async {
+            let response = self
+                .http
+                .get(self.join(path)?)
+                .headers(headers)
+                .send()
+                .await
+                .map_err(map_request_error)?;
+            parse_response(response).await
+        };
+        tokio::time::timeout(self.timeout, request)
             .await
-            .map_err(map_request_error)?;
-        parse_response(response).await
+            .map_err(|_| anyhow::anyhow!("dashboard API request timed out"))?
     }
 
     async fn post_json<T: DeserializeOwned, B: Serialize + ?Sized>(
@@ -244,15 +250,20 @@ impl DashboardClient {
         body: &B,
     ) -> Result<ApiEnvelope<T>> {
         let headers = headers(token)?;
-        let response = self
-            .http
-            .post(self.join(path)?)
-            .headers(headers)
-            .json(body)
-            .send()
+        let request = async {
+            let response = self
+                .http
+                .post(self.join(path)?)
+                .headers(headers)
+                .json(body)
+                .send()
+                .await
+                .map_err(map_request_error)?;
+            parse_response(response).await
+        };
+        tokio::time::timeout(self.timeout, request)
             .await
-            .map_err(map_request_error)?;
-        parse_response(response).await
+            .map_err(|_| anyhow::anyhow!("dashboard API request timed out"))?
     }
 }
 
