@@ -1,7 +1,7 @@
 use std::{
     io::Read,
     io::{self, Write},
-    net::{TcpListener, TcpStream},
+    net::{Shutdown, TcpListener, TcpStream},
     path::Path,
     process::Command,
     thread,
@@ -34,7 +34,7 @@ pub async fn login(client: &DashboardClient, config_path: &Path, args: LoginArgs
     };
     let state = args
         .state
-        .unwrap_or_else(|| format!("yc_cli_{}", random_state_suffix()));
+        .unwrap_or_else(|| format!("ycloud_cli_{}", random_state_suffix()));
     let manual = args.manual || args.code.is_some();
     let (authorize_url, listener) = if manual {
         (
@@ -162,7 +162,7 @@ fn handle_callback(stream: &mut TcpStream, expected_state: &str) -> Result<Strin
         .context("failed to parse browser callback URL")?;
 
     if url.path() != "/callback" {
-        write_callback_response(stream, 404, "yc login callback not found")?;
+        write_callback_response(stream, 404, "ycloud login callback not found")?;
         anyhow::bail!("unexpected browser callback path: {}", url.path());
     }
 
@@ -181,11 +181,11 @@ fn handle_callback(stream: &mut TcpStream, expected_state: &str) -> Result<Strin
     }
 
     if state.as_deref() != Some(expected_state) {
-        write_callback_response(stream, 400, "yc login state mismatch")?;
+        write_callback_response(stream, 400, "ycloud login state mismatch")?;
         anyhow::bail!("browser callback state does not match login request");
     }
     if let Some(error) = error {
-        write_callback_response(stream, 400, "yc login authorization failed")?;
+        write_callback_response(stream, 400, "ycloud login authorization failed")?;
         if let Some(description) = error_description.filter(|value| !value.trim().is_empty()) {
             anyhow::bail!("dashboard authorization failed: {error}: {description}");
         }
@@ -195,7 +195,7 @@ fn handle_callback(stream: &mut TcpStream, expected_state: &str) -> Result<Strin
     write_callback_response(
         stream,
         200,
-        "yc login succeeded. You can close this browser tab.",
+        "ycloud login succeeded. You can close this browser tab.",
     )?;
     Ok(code)
 }
@@ -208,17 +208,22 @@ fn write_callback_response(stream: &mut TcpStream, status: u16, message: &str) -
         _ => "OK",
     };
     let body = format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>yc login</title></head><body><p>{}</p></body></html>",
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>ycloud login</title></head><body><p>{}</p></body></html>",
         message
     );
     let response = format!(
         "HTTP/1.1 {status} {reason}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.as_bytes().len(),
+        body.len(),
         body
     );
     stream
         .write_all(response.as_bytes())
-        .context("failed to write browser callback response")
+        .context("failed to write browser callback response")?;
+    stream
+        .flush()
+        .context("failed to flush browser callback response")?;
+    let _ = stream.shutdown(Shutdown::Write);
+    Ok(())
 }
 
 fn open_browser(url: &str) -> Result<()> {
@@ -557,7 +562,7 @@ mod tests {
             error.to_string(),
             "browser callback state does not match login request"
         );
-        assert!(response.contains("yc login state mismatch"));
+        assert!(response.contains("ycloud login state mismatch"));
     }
 
     fn invoke_callback(target: &str, expected_state: &str) -> (Result<String>, String) {

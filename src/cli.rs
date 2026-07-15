@@ -3,15 +3,15 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-pub const DEFAULT_DASHBOARD_URL: &str = "http://127.0.0.1:8036";
+pub const DEFAULT_DASHBOARD_URL: &str = "https://www.ycloud.com";
 
 #[derive(Debug, Parser)]
-#[command(name = "yc", version, about = "YCloud Console CLI")]
+#[command(name = "ycloud", version, about = "YCloud Console CLI")]
 pub struct Cli {
-    #[arg(long, global = true, env = "YC_DASHBOARD_URL")]
+    #[arg(long, global = true, env = "YCLOUD_DASHBOARD_URL")]
     pub dashboard_url: Option<String>,
 
-    #[arg(long, global = true, env = "YC_CONFIG")]
+    #[arg(long, global = true, env = "YCLOUD_CONFIG")]
     pub config: Option<PathBuf>,
 
     #[command(subcommand)]
@@ -24,13 +24,13 @@ impl Cli {
             return Ok(path.clone());
         }
         let home = dirs::home_dir().context("failed to resolve home directory")?;
-        Ok(home.join(".yc").join("config.toml"))
+        Ok(home.join(".ycloud").join("config.toml"))
     }
 }
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    #[command(about = "Authorize yc with a logged-in YCloud Dashboard browser")]
+    #[command(about = "Authorize ycloud with a logged-in YCloud Dashboard browser")]
     Login(LoginArgs),
     #[command(about = "Show the current Dashboard CLI identity and granted permissions")]
     Whoami,
@@ -318,8 +318,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dashboard_defaults_to_online() {
+        assert_eq!(DEFAULT_DASHBOARD_URL, "https://www.ycloud.com");
+    }
+
+    #[test]
     fn login_defaults_to_basic_profile_without_explicit_permissions() {
-        let cli = Cli::try_parse_from(["yc", "login", "--manual"]).unwrap();
+        let cli = Cli::try_parse_from(["ycloud", "login", "--manual"]).unwrap();
 
         let Command::Login(args) = cli.command else {
             panic!("expected login command");
@@ -331,7 +336,7 @@ mod tests {
     #[test]
     fn login_accepts_profile_and_repeated_permission_flags() {
         let cli = Cli::try_parse_from([
-            "yc",
+            "ycloud",
             "login",
             "--profile",
             "analytics-read",

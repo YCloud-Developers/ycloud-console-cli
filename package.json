@@ -1,0 +1,10 @@
+{
+  "name": "ycloud-console-cli-release",
+  "private": true,
+  "version": "0.1.0",
+  "license": "MIT",
+  "scripts": {
+    "check:release": "node scripts/check-release.mjs",
+    "test:npm": "node --test npm/console-cli/test/*.test.js scripts/*.test.mjs"
+  }
+}

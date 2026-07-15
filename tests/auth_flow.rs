@@ -3,7 +3,7 @@ use wiremock::{
     matchers::{body_json, header, method, path},
     Mock, MockServer, ResponseTemplate,
 };
-use yc_cli::{config::Config, http::DashboardClient};
+use ycloud_console_cli::{config::Config, http::DashboardClient};
 
 #[tokio::test]
 async fn token_exchange_uses_backend_contract_and_saves_config_shape() {
@@ -47,11 +47,11 @@ async fn token_exchange_uses_backend_contract_and_saves_config_shape() {
     let tmp = tempfile::tempdir().unwrap();
     let config_path = tmp.path().join("config.toml");
     let client = DashboardClient::new(server.uri()).unwrap();
-    yc_cli::auth::login(
+    ycloud_console_cli::auth::login(
         &client,
         &config_path,
-        yc_cli::cli::LoginArgs {
-            profile: yc_cli::cli::PermissionProfile::Basic,
+        ycloud_console_cli::cli::LoginArgs {
+            profile: ycloud_console_cli::cli::PermissionProfile::Basic,
             permissions: vec![],
             code: Some("code-1".to_string()),
             code_verifier: Some("verifier-1".to_string()),
@@ -100,11 +100,11 @@ async fn refresh_rotates_stored_tokens() {
 
     let tmp = tempfile::tempdir().unwrap();
     let config_path = tmp.path().join("config.toml");
-    let initial = yc_cli::config::Config {
-        dashboard: yc_cli::config::DashboardConfig {
+    let initial = ycloud_console_cli::config::Config {
+        dashboard: ycloud_console_cli::config::DashboardConfig {
             base_url: server.uri(),
         },
-        auth: yc_cli::config::AuthConfig {
+        auth: ycloud_console_cli::config::AuthConfig {
             token_type: "Bearer".to_string(),
             access_token: "YCLI.old-access".to_string(),
             refresh_token: "YCLI.old-refresh".to_string(),
@@ -117,7 +117,9 @@ async fn refresh_rotates_stored_tokens() {
     initial.save(&config_path).unwrap();
 
     let client = DashboardClient::new(server.uri()).unwrap();
-    yc_cli::auth::refresh(&client, &config_path).await.unwrap();
+    ycloud_console_cli::auth::refresh(&client, &config_path)
+        .await
+        .unwrap();
 
     let updated = Config::load(&config_path).unwrap();
     assert_eq!(updated.auth.access_token, "YCLI.new-access");
@@ -158,11 +160,11 @@ async fn contacts_list_calls_cli_read_adapter() {
 
     let tmp = tempfile::tempdir().unwrap();
     let config_path = tmp.path().join("config.toml");
-    let initial = yc_cli::config::Config {
-        dashboard: yc_cli::config::DashboardConfig {
+    let initial = ycloud_console_cli::config::Config {
+        dashboard: ycloud_console_cli::config::DashboardConfig {
             base_url: server.uri(),
         },
-        auth: yc_cli::config::AuthConfig {
+        auth: ycloud_console_cli::config::AuthConfig {
             token_type: "Bearer".to_string(),
             access_token: "YCLI.access".to_string(),
             refresh_token: "YCLI.refresh".to_string(),
@@ -175,10 +177,10 @@ async fn contacts_list_calls_cli_read_adapter() {
     initial.save(&config_path).unwrap();
 
     let client = DashboardClient::new(server.uri()).unwrap();
-    yc_cli::auth::contacts_list(
+    ycloud_console_cli::auth::contacts_list(
         &client,
         &config_path,
-        yc_cli::cli::ContactsListArgs {
+        ycloud_console_cli::cli::ContactsListArgs {
             page_no: 1,
             page_size: 10,
             condition: None,
@@ -216,7 +218,7 @@ async fn contacts_metadata_calls_cli_readonly_endpoint() {
     saved_config(server.uri()).save(&config_path).unwrap();
 
     let client = DashboardClient::new(server.uri()).unwrap();
-    yc_cli::auth::contacts_metadata(&client, &config_path)
+    ycloud_console_cli::auth::contacts_metadata(&client, &config_path)
         .await
         .unwrap();
 }
@@ -245,7 +247,7 @@ async fn integrations_status_calls_cli_readonly_endpoint() {
     saved_config(server.uri()).save(&config_path).unwrap();
 
     let client = DashboardClient::new(server.uri()).unwrap();
-    yc_cli::auth::integrations_status(&client, &config_path)
+    ycloud_console_cli::auth::integrations_status(&client, &config_path)
         .await
         .unwrap();
 }
@@ -285,11 +287,11 @@ async fn analytics_overview_calls_cli_read_adapters() {
     saved_config(server.uri()).save(&config_path).unwrap();
 
     let client = DashboardClient::new(server.uri()).unwrap();
-    yc_cli::auth::analytics_overview(
+    ycloud_console_cli::auth::analytics_overview(
         &client,
         &config_path,
-        yc_cli::cli::AnalyticsOverviewArgs {
-            range: yc_cli::cli::AnalyticsRangeArgs {
+        ycloud_console_cli::cli::AnalyticsOverviewArgs {
+            range: ycloud_console_cli::cli::AnalyticsRangeArgs {
                 start_time: Some(1782921600000),
                 end_time: Some(1783526400000),
             },
@@ -340,11 +342,11 @@ async fn analytics_logs_calls_cli_message_search_adapter() {
     saved_config(server.uri()).save(&config_path).unwrap();
 
     let client = DashboardClient::new(server.uri()).unwrap();
-    yc_cli::auth::analytics_logs(
+    ycloud_console_cli::auth::analytics_logs(
         &client,
         &config_path,
-        yc_cli::cli::AnalyticsLogsArgs {
-            range: yc_cli::cli::AnalyticsRangeArgs {
+        ycloud_console_cli::cli::AnalyticsLogsArgs {
+            range: ycloud_console_cli::cli::AnalyticsRangeArgs {
                 start_time: Some(1782921600000),
                 end_time: Some(1783526400000),
             },
@@ -400,11 +402,11 @@ async fn analytics_calling_logs_calls_cli_calling_search_adapter() {
     saved_config(server.uri()).save(&config_path).unwrap();
 
     let client = DashboardClient::new(server.uri()).unwrap();
-    yc_cli::auth::analytics_calling_logs(
+    ycloud_console_cli::auth::analytics_calling_logs(
         &client,
         &config_path,
-        yc_cli::cli::AnalyticsCallingLogsArgs {
-            range: yc_cli::cli::AnalyticsRangeArgs {
+        ycloud_console_cli::cli::AnalyticsCallingLogsArgs {
+            range: ycloud_console_cli::cli::AnalyticsRangeArgs {
                 start_time: Some(1782921600000),
                 end_time: Some(1783526400000),
             },
@@ -422,10 +424,10 @@ async fn analytics_calling_logs_calls_cli_calling_search_adapter() {
     .unwrap();
 }
 
-fn saved_config(base_url: String) -> yc_cli::config::Config {
-    yc_cli::config::Config {
-        dashboard: yc_cli::config::DashboardConfig { base_url },
-        auth: yc_cli::config::AuthConfig {
+fn saved_config(base_url: String) -> ycloud_console_cli::config::Config {
+    ycloud_console_cli::config::Config {
+        dashboard: ycloud_console_cli::config::DashboardConfig { base_url },
+        auth: ycloud_console_cli::config::AuthConfig {
             token_type: "Bearer".to_string(),
             access_token: "YCLI.access".to_string(),
             refresh_token: "YCLI.refresh".to_string(),

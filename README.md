@@ -1,29 +1,41 @@
-# yc - YCloud Console CLI
+# ycloud - YCloud Console CLI
 
-`yc` is the Console/Dashboard-oriented YCloud CLI. It is intentionally separate from the existing `ycli` OpenAPI/API-key CLI.
+`ycloud` is the Console/Dashboard-oriented YCloud CLI. It is intentionally separate from the existing `ycli` OpenAPI/API-key CLI.
 
 ## Scope
 
-- `yc login` uses Dashboard browser grant + PKCE, receives the code through a localhost callback by default, and stores `YCLI.` tokens.
-- `yc whoami` reads the current Console CLI identity.
-- `yc tenants list` lists tenants available to the current Console CLI token.
-- `yc integrations status` lists Dashboard integration enabled status through the CLI read-only adapter.
-- `yc contacts metadata` lists contact sources, tags, segments, and segment filters through the CLI read-only adapter.
-- `yc contacts list` and `yc analytics ...` use permission-gated `/api/cli/read/**` compatibility adapters; `YCLI.` tokens do not call ordinary Dashboard paths.
-- `yc refresh` rotates the refresh token.
-- `yc logout` revokes the current token and removes the local profile.
+- `ycloud login` uses Dashboard browser grant + PKCE, receives the code through a localhost callback by default, and stores `YCLI.` tokens.
+- `ycloud whoami` reads the current Console CLI identity.
+- `ycloud tenants list` lists tenants available to the current Console CLI token.
+- `ycloud integrations status` lists Dashboard integration enabled status through the CLI read-only adapter.
+- `ycloud contacts metadata` lists contact sources, tags, segments, and segment filters through the CLI read-only adapter.
+- `ycloud contacts list` and `ycloud analytics ...` use permission-gated `/api/cli/read/**` compatibility adapters; `YCLI.` tokens do not call ordinary Dashboard paths.
+- `ycloud refresh` rotates the refresh token.
+- `ycloud logout` revokes the current token and removes the local profile.
 
-Manual copy-paste authorization code input is still available with `yc login --manual` for terminals that cannot receive a localhost browser callback.
+Manual copy-paste authorization code input is still available with `ycloud login --manual` for terminals that cannot receive a localhost browser callback.
+
+## Installation
+
+After the first public release, install the CLI with npm:
+
+```bash
+npm install --global @ycloud-ai/console-cli
+ycloud --version
+```
+
+Or install it from the YCloud Homebrew tap:
+
+```bash
+brew install YCloud-Developers/tap/ycloud
+ycloud --version
+```
+
+Release packages support macOS and Linux on ARM64 and x64.
 
 ## Local Test Against Dashboard
 
-Start account-service, security, and web with the same route group:
-
-```bash
--Dqipeng.client.group=sqj -Dqipeng.server.group=sqj
-```
-
-Then run:
+Run the required Dashboard services locally, then pass the local URL explicitly:
 
 ```bash
 cargo run -- login --dashboard-url http://127.0.0.1:8036 --profile readonly
@@ -42,45 +54,35 @@ In manual mode, open the printed URL in a browser that is already logged in to D
 ## Commands
 
 ```bash
-yc login --dashboard-url http://127.0.0.1:8036 --profile readonly
-yc whoami
-yc tenants list
-yc integrations status
-yc contacts metadata
-yc analytics outline
-yc analytics overview
-yc analytics logs --page-no 1 --page-size 20
-yc analytics calling-logs --page-no 1 --page-size 20
-yc refresh
-yc logout
-```
-
-For dev-blue analytics testing:
-
-```bash
-cargo run -- login --dashboard-url https://www-dev-blue.ycloud.com --profile analytics-read
-cargo run -- analytics outline
-cargo run -- analytics overview --timezone GMT+8
-cargo run -- analytics logs --page-no 1 --page-size 10
-cargo run -- analytics calling-logs --page-no 1 --page-size 10
+ycloud login --profile readonly
+ycloud whoami
+ycloud tenants list
+ycloud integrations status
+ycloud contacts metadata
+ycloud analytics outline
+ycloud analytics overview
+ycloud analytics logs --page-no 1 --page-size 20
+ycloud analytics calling-logs --page-no 1 --page-size 20
+ycloud refresh
+ycloud logout
 ```
 
 Analytics commands default to the last 7 days. Use millisecond timestamps to pin the same range as the Dashboard page:
 
 ```bash
-yc analytics overview --start-time 1782921600000 --end-time 1783526400000 --from 8613800138000 --region-code CN --message-category marketing,utility
-yc analytics logs --start-time 1782921600000 --end-time 1783526400000 --direction OutBound --status sent,delivered --source "WhatsApp Business API"
-yc analytics calling-logs --start-time 1782921600000 --end-time 1783526400000 --directions BUSINESS_INITIATED --sources CALLING --status COMPLETED
+ycloud analytics overview --start-time 1782921600000 --end-time 1783526400000 --from 8613800138000 --region-code CN --message-category marketing,utility
+ycloud analytics logs --start-time 1782921600000 --end-time 1783526400000 --direction OutBound --status sent,delivered --source "WhatsApp Business API"
+ycloud analytics calling-logs --start-time 1782921600000 --end-time 1783526400000 --directions BUSINESS_INITIATED --sources CALLING --status COMPLETED
 ```
 
 ## Online Smoke
 
-The P0 read-only Dashboard CLI commands are merged into `main` and can be tested against online after `yc login`:
+The P0 read-only Dashboard CLI commands are merged into `main` and can be tested against online after `ycloud login`:
 
 ```bash
-yc --dashboard-url https://www.ycloud.com whoami
-yc --dashboard-url https://www.ycloud.com integrations status
-yc --dashboard-url https://www.ycloud.com contacts metadata
+ycloud whoami
+ycloud integrations status
+ycloud contacts metadata
 ```
 
 The expected result is:
@@ -89,14 +91,12 @@ The expected result is:
 - `integrations status` returns enabled Dashboard integrations.
 - `contacts metadata` returns contact `segmentFilters`, `segments`, `sources`, and `tags`.
 
-Backend online release verified on 2026-07-10 with `yunpian-attila-web` build `#816`.
-
 ## Permission Profiles
 
-`yc login` defaults to `--profile basic`. Available profiles are `basic`, `contacts-read`, `analytics-read`, `integrations-read`, `readonly`, and `custom`. Add individual ACTIVE permissions by repeating `--permission`:
+`ycloud login` defaults to `--profile basic`. Available profiles are `basic`, `contacts-read`, `analytics-read`, `integrations-read`, `readonly`, and `custom`. Add individual ACTIVE permissions by repeating `--permission`:
 
 ```bash
-yc login --profile basic \
+ycloud login --profile basic \
   --permission yc.integration.status.read \
   --permission yc.contact.record.read
 ```
@@ -107,6 +107,10 @@ In the default browser flow, an authorization rejection returns to the localhost
 
 ## Config
 
-Config is stored at `~/.yc/config.toml`.
+Config is stored at `~/.ycloud/config.toml`. The Dashboard defaults to `https://www.ycloud.com`. Override the config path with `YCLOUD_CONFIG` and the Dashboard base URL with `YCLOUD_DASHBOARD_URL`.
 
 Tokens are persisted in this first P0 implementation so the backend flow can be tested end to end. The production hardening path is system keychain first, file fallback with strict permissions and an explicit warning.
+
+## License
+
+MIT

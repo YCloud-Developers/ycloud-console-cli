@@ -1,1 +1,3 @@
 /target/
+/npm/platforms/*/bin/ycloud
+/release-artifacts/

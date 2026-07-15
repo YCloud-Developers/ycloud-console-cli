@@ -1,0 +1,208 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Verify source
+        run: |
+          cargo fmt -- --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --locked
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Verify release metadata
+        run: |
+          npm run check:release
+          npm run test:npm
+
+  build:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin-arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+          - platform: darwin-x64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - platform: linux-x64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust target
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add "${{ matrix.target }}"
+      - name: Install musl tools
+        if: startsWith(matrix.platform, 'linux-')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build release binary
+        run: cargo build --locked --release --target "${{ matrix.target }}"
+      - name: Package release binary
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          output="dist/${{ matrix.platform }}"
+          archive="ycloud-v${version}-${{ matrix.target }}.tar.gz"
+          mkdir -p "${output}"
+          install -m 755 "target/${{ matrix.target }}/release/ycloud" "${output}/ycloud"
+          tar -C "${output}" -czf "${output}/${archive}" ycloud
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: dist/${{ matrix.platform }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-artifacts
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+      - name: Install current npm CLI
+        run: npm install --global npm@11.18.0
+      - name: Stage native npm packages
+        run: node scripts/stage-npm-packages.mjs release-artifacts
+      - name: Pack native npm packages
+        run: |
+          mkdir -p npm-tarballs
+          for package in npm/platforms/*; do
+            npm pack "./${package}" --pack-destination npm-tarballs
+          done
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          find release-artifacts -name '*.tar.gz' -exec sha256sum {} + > SHA256SUMS
+          gh release create "${GITHUB_REF_NAME}" \
+            --draft \
+            --generate-notes \
+            --title "YCloud Console CLI ${GITHUB_REF_NAME}" \
+            release-artifacts/release-*/*.tar.gz SHA256SUMS
+      - name: Publish native npm packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for package in npm-tarballs/*.tgz; do
+            npm publish "./${package}" --access public
+          done
+      - name: Publish npm launcher
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish ./npm/console-cli --access public
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${GITHUB_REF_NAME}" --draft=false
+      - name: Render Homebrew formula
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          node scripts/render-homebrew-formula.mjs \
+            "${version}" \
+            npm-tarballs \
+            generated-homebrew/Formula/ycloud.rb
+      - name: Configure Homebrew tap deploy key
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          if [ -z "${TAP_DEPLOY_KEY}" ]; then
+            echo "HOMEBREW_TAP_DEPLOY_KEY is required" >&2
+            exit 1
+          fi
+          mkdir -p "${HOME}/.ssh"
+          printf '%s\n' "${TAP_DEPLOY_KEY}" > "${HOME}/.ssh/homebrew_tap"
+          chmod 600 "${HOME}/.ssh/homebrew_tap"
+          printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "${HOME}/.ssh/known_hosts"
+      - name: Update Homebrew tap
+        run: |
+          export GIT_SSH_COMMAND="ssh -i ${HOME}/.ssh/homebrew_tap -o IdentitiesOnly=yes"
+          git clone git@github.com:YCloud-Developers/homebrew-tap.git homebrew-tap
+          mkdir -p homebrew-tap/Formula
+          cp generated-homebrew/Formula/ycloud.rb homebrew-tap/Formula/ycloud.rb
+          git -C homebrew-tap config user.name "github-actions[bot]"
+          git -C homebrew-tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C homebrew-tap add Formula/ycloud.rb
+          git -C homebrew-tap commit -m "ycloud ${GITHUB_REF_NAME#v}"
+          git -C homebrew-tap push
+
+  npm-smoke:
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+          - runner: macos-15-intel
+          - runner: ubuntu-24.04-arm
+          - runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+      - name: Install published npm package
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for attempt in 1 2 3 4 5; do
+            if npm install --global "@ycloud-ai/console-cli@${version}"; then
+              exit 0
+            fi
+            sleep 15
+          done
+          exit 1
+      - name: Verify npm installation
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          ycloud --version | grep -F "ycloud ${version}"
+
+  homebrew-smoke:
+    needs: publish
+    runs-on: macos-15
+    steps:
+      - name: Install published Homebrew formula
+        run: brew install YCloud-Developers/tap/ycloud
+      - name: Verify Homebrew installation
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          ycloud --version | grep -F "ycloud ${version}"

@@ -1,11 +1,13 @@
 [package]
-name = "yc-cli"
+name = "ycloud-console-cli"
 version = "0.1.0"
 edition = "2021"
 description = "Console-oriented YCloud CLI using browser grant auth"
+license = "MIT"
+homepage = "https://www.ycloud.com"
 
 [[bin]]
-name = "yc"
+name = "ycloud"
 path = "src/main.rs"
 
 [dependencies]

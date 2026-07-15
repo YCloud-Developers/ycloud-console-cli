@@ -2,5 +2,5 @@ use anyhow::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    yc_cli::run().await
+    ycloud_console_cli::run().await
 }

@@ -1,0 +1,13 @@
+{
+  "name": "@ycloud-ai/console-cli-darwin-arm64",
+  "version": "0.1.0",
+  "description": "YCloud Console CLI native binary for macOS ARM64",
+  "homepage": "https://www.ycloud.com",
+  "license": "MIT",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "files": ["bin/ycloud"],
+  "publishConfig": {
+    "access": "public"
+  }
+}
