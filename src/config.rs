@@ -20,7 +20,7 @@ pub struct AuthConfig {
     pub access_token: String,
     pub refresh_token: String,
     pub record_id: String,
-    pub scope: String,
+    pub requested_permissions: Vec<String>,
     pub tenant_id: Option<String>,
     pub user_id: Option<String>,
 }
@@ -86,7 +86,7 @@ mod tests {
                 access_token: "YCLI.access".to_string(),
                 refresh_token: "YCLI.refresh".to_string(),
                 record_id: "record-1".to_string(),
-                scope: "developers".to_string(),
+                requested_permissions: vec!["yc.identity.current.read".to_string()],
                 tenant_id: Some("tenant-1".to_string()),
                 user_id: Some("user-1".to_string()),
             },

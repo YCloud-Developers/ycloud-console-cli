@@ -1,3 +1,4 @@
+use std::{io::Write, net::TcpListener, thread, time::Duration};
 use wiremock::{
     matchers::{body_json, header, method, path},
     Mock, MockServer, ResponseTemplate,
@@ -20,7 +21,9 @@ async fn token_exchange_uses_backend_contract_and_saves_config_shape() {
                 "tokenType": "Bearer",
                 "accessToken": "YCLI.access",
                 "refreshToken": "YCLI.refresh",
-                "recordId": "record-1"
+                "recordId": "record-1",
+                "requestedPermissions": ["yc.identity.current.read", "yc.tenant.list.read"],
+                "permissionModelVersion": 1
             }
         })))
         .mount(&server)
@@ -34,7 +37,8 @@ async fn token_exchange_uses_backend_contract_and_saves_config_shape() {
             "data": {
                 "userId": "user-1",
                 "tenantId": "tenant-1",
-                "permissions": ["developers"]
+                "requestedPermissions": ["yc.identity.current.read", "yc.tenant.list.read"],
+                "effectivePermissions": ["yc.identity.current.read", "yc.tenant.list.read"]
             }
         })))
         .mount(&server)
@@ -47,7 +51,8 @@ async fn token_exchange_uses_backend_contract_and_saves_config_shape() {
         &client,
         &config_path,
         yc_cli::cli::LoginArgs {
-            scope: "developers".to_string(),
+            profile: yc_cli::cli::PermissionProfile::Basic,
+            permissions: vec![],
             code: Some("code-1".to_string()),
             code_verifier: Some("verifier-1".to_string()),
             state: Some("state-1".to_string()),
@@ -62,7 +67,10 @@ async fn token_exchange_uses_backend_contract_and_saves_config_shape() {
     assert_eq!(config.auth.access_token, "YCLI.access");
     assert_eq!(config.auth.refresh_token, "YCLI.refresh");
     assert_eq!(config.auth.record_id, "record-1");
-    assert_eq!(config.auth.scope, "developers");
+    assert_eq!(
+        config.auth.requested_permissions,
+        vec!["yc.identity.current.read", "yc.tenant.list.read"]
+    );
     assert_eq!(config.auth.tenant_id.as_deref(), Some("tenant-1"));
     assert_eq!(config.auth.user_id.as_deref(), Some("user-1"));
 }
@@ -82,7 +90,9 @@ async fn refresh_rotates_stored_tokens() {
                 "tokenType": "Bearer",
                 "accessToken": "YCLI.new-access",
                 "refreshToken": "YCLI.new-refresh",
-                "recordId": "record-2"
+                "recordId": "record-2",
+                "requestedPermissions": ["yc.identity.current.read", "yc.tenant.list.read"],
+                "permissionModelVersion": 1
             }
         })))
         .mount(&server)
@@ -99,7 +109,7 @@ async fn refresh_rotates_stored_tokens() {
             access_token: "YCLI.old-access".to_string(),
             refresh_token: "YCLI.old-refresh".to_string(),
             record_id: "record-1".to_string(),
-            scope: "developers".to_string(),
+            requested_permissions: vec!["yc.identity.current.read".to_string()],
             tenant_id: None,
             user_id: None,
         },
@@ -113,13 +123,17 @@ async fn refresh_rotates_stored_tokens() {
     assert_eq!(updated.auth.access_token, "YCLI.new-access");
     assert_eq!(updated.auth.refresh_token, "YCLI.new-refresh");
     assert_eq!(updated.auth.record_id, "record-2");
+    assert_eq!(
+        updated.auth.requested_permissions,
+        vec!["yc.identity.current.read", "yc.tenant.list.read"]
+    );
 }
 
 #[tokio::test]
-async fn contacts_list_calls_attila_web_business_endpoint() {
+async fn contacts_list_calls_cli_read_adapter() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path("/api/contacts/search"))
+        .and(path("/api/cli/read/contacts/search"))
         .and(header("authorization", "Bearer YCLI.access"))
         .and(body_json(serde_json::json!({
             "pageNo": 1,
@@ -153,7 +167,7 @@ async fn contacts_list_calls_attila_web_business_endpoint() {
             access_token: "YCLI.access".to_string(),
             refresh_token: "YCLI.refresh".to_string(),
             record_id: "1272676752573050880".to_string(),
-            scope: "developers".to_string(),
+            requested_permissions: vec!["yc.contact.record.read".to_string()],
             tenant_id: Some("tenant-1".to_string()),
             user_id: Some("user-1".to_string()),
         },
@@ -237,7 +251,7 @@ async fn integrations_status_calls_cli_readonly_endpoint() {
 }
 
 #[tokio::test]
-async fn analytics_overview_calls_dashboard_page_endpoints() {
+async fn analytics_overview_calls_cli_read_adapters() {
     let server = MockServer::start().await;
     let expected_body = serde_json::json!({
         "startTime": 1782921600000_i64,
@@ -248,9 +262,9 @@ async fn analytics_overview_calls_dashboard_page_endpoints() {
         "messageCategory": "marketing,utility"
     });
     for endpoint in [
-        "/api/whatsapp/analytics/deliveryAnalytics",
-        "/api/whatsapp/analytics/messageDetail",
-        "/api/whatsapp/analytics/failureReasonShare",
+        "/api/cli/read/whatsapp/analytics/delivery",
+        "/api/cli/read/whatsapp/analytics/message-detail",
+        "/api/cli/read/whatsapp/analytics/failure-reasons",
     ] {
         Mock::given(method("POST"))
             .and(path(endpoint))
@@ -290,10 +304,10 @@ async fn analytics_overview_calls_dashboard_page_endpoints() {
 }
 
 #[tokio::test]
-async fn analytics_logs_calls_dashboard_message_search_endpoint() {
+async fn analytics_logs_calls_cli_message_search_adapter() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path("/api/whatsapp/message/search"))
+        .and(path("/api/cli/read/whatsapp/messages/search"))
         .and(header("authorization", "Bearer YCLI.access"))
         .and(body_json(serde_json::json!({
             "direction": "OutBound",
@@ -352,10 +366,10 @@ async fn analytics_logs_calls_dashboard_message_search_endpoint() {
 }
 
 #[tokio::test]
-async fn analytics_calling_logs_calls_dashboard_calling_search_endpoint() {
+async fn analytics_calling_logs_calls_cli_calling_search_adapter() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path("/api/calling/logs/search"))
+        .and(path("/api/cli/read/calling/logs/search"))
         .and(header("authorization", "Bearer YCLI.access"))
         .and(body_json(serde_json::json!({
             "startTime": 1782921600000_i64,
@@ -416,9 +430,55 @@ fn saved_config(base_url: String) -> yc_cli::config::Config {
             access_token: "YCLI.access".to_string(),
             refresh_token: "YCLI.refresh".to_string(),
             record_id: "1272676752573050880".to_string(),
-            scope: "developers whatsapp:manager:analytics".to_string(),
+            requested_permissions: vec![
+                "yc.identity.current.read".to_string(),
+                "yc.whatsapp.analytics.read".to_string(),
+            ],
             tenant_id: Some("tenant-1".to_string()),
             user_id: Some("user-1".to_string()),
         },
     }
+}
+
+#[tokio::test]
+async fn request_times_out_instead_of_waiting_indefinitely() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/cli/auth/tenants/list"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_delay(Duration::from_millis(200))
+                .set_body_json(serde_json::json!({"code": 0, "data": {"tenants": []}})),
+        )
+        .mount(&server)
+        .await;
+
+    let client =
+        DashboardClient::new_with_timeout(server.uri(), Duration::from_millis(25)).unwrap();
+    let error = client.tenants("YCLI.access").await.unwrap_err();
+
+    assert!(error.to_string().to_lowercase().contains("timed out"));
+}
+
+#[tokio::test]
+async fn response_body_timeout_is_not_hidden_as_a_parse_error() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{",
+            )
+            .unwrap();
+        thread::sleep(Duration::from_millis(200));
+    });
+
+    let client =
+        DashboardClient::new_with_timeout(format!("http://{address}"), Duration::from_millis(25))
+            .unwrap();
+    let error = client.tenants("YCLI.access").await.unwrap_err();
+
+    assert!(error.to_string().to_lowercase().contains("timed out"));
+    server.join().unwrap();
 }

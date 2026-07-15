@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
+use std::time::Duration;
 use url::Url;
 
 use crate::pkce::PkcePair;
@@ -13,12 +14,19 @@ pub struct DashboardClient {
 
 impl DashboardClient {
     pub fn new(base_url: String) -> Result<Self> {
+        Self::new_with_timeout(base_url, Duration::from_secs(30))
+    }
+
+    pub fn new_with_timeout(base_url: String, timeout: Duration) -> Result<Self> {
         let mut parsed = Url::parse(&base_url).context("dashboard url must be absolute")?;
         if parsed.path() == "/" {
             parsed.set_path("");
         }
         Ok(Self {
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(timeout)
+                .build()
+                .context("failed to build dashboard HTTP client")?,
             base_url: parsed,
         })
     }
@@ -29,7 +37,8 @@ impl DashboardClient {
 
     pub fn authorize_url(
         &self,
-        scope: &str,
+        profile: &str,
+        permissions: &[String],
         state: &str,
         pkce: &PkcePair,
         redirect_uri: Option<&str>,
@@ -38,10 +47,13 @@ impl DashboardClient {
         let mut query = url.query_pairs_mut();
         query
             .append_pair("responseType", "code")
-            .append_pair("scope", scope)
+            .append_pair("profile", profile)
             .append_pair("state", state)
             .append_pair("codeChallenge", &pkce.code_challenge)
             .append_pair("codeChallengeMethod", "S256");
+        if !permissions.is_empty() {
+            query.append_pair("permissions", &permissions.join(","));
+        }
         if let Some(redirect_uri) = redirect_uri {
             query.append_pair("redirectUri", redirect_uri);
         }
@@ -102,8 +114,12 @@ impl DashboardClient {
         access_token: &str,
         request: ContactsSearchRequest<'_>,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
-        self.post_json("/api/contacts/search", Some(access_token), &request)
-            .await
+        self.post_json(
+            "/api/cli/read/contacts/search",
+            Some(access_token),
+            &request,
+        )
+        .await
     }
 
     pub async fn contacts_metadata(
@@ -128,7 +144,7 @@ impl DashboardClient {
         request: AnalyticsRangeRequest,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
         let path = format!(
-            "/api/whatsapp/analytics/outline?startTime={}&endTime={}",
+            "/api/cli/read/whatsapp/analytics/outline?startTime={}&endTime={}",
             request.start_time, request.end_time
         );
         self.get_json(&path, Some(access_token)).await
@@ -140,7 +156,7 @@ impl DashboardClient {
         request: &AnalyticsOverviewRequest<'_>,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
         self.post_json(
-            "/api/whatsapp/analytics/deliveryAnalytics",
+            "/api/cli/read/whatsapp/analytics/delivery",
             Some(access_token),
             request,
         )
@@ -153,7 +169,7 @@ impl DashboardClient {
         request: &AnalyticsOverviewRequest<'_>,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
         self.post_json(
-            "/api/whatsapp/analytics/messageDetail",
+            "/api/cli/read/whatsapp/analytics/message-detail",
             Some(access_token),
             request,
         )
@@ -166,7 +182,7 @@ impl DashboardClient {
         request: &AnalyticsOverviewRequest<'_>,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
         self.post_json(
-            "/api/whatsapp/analytics/failureReasonShare",
+            "/api/cli/read/whatsapp/analytics/failure-reasons",
             Some(access_token),
             request,
         )
@@ -178,8 +194,12 @@ impl DashboardClient {
         access_token: &str,
         request: &AnalyticsLogsRequest<'_>,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
-        self.post_json("/api/whatsapp/message/search", Some(access_token), request)
-            .await
+        self.post_json(
+            "/api/cli/read/whatsapp/messages/search",
+            Some(access_token),
+            request,
+        )
+        .await
     }
 
     pub async fn calling_logs_search(
@@ -187,8 +207,12 @@ impl DashboardClient {
         access_token: &str,
         request: &AnalyticsCallingLogsRequest<'_>,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
-        self.post_json("/api/calling/logs/search", Some(access_token), request)
-            .await
+        self.post_json(
+            "/api/cli/read/calling/logs/search",
+            Some(access_token),
+            request,
+        )
+        .await
     }
 
     fn join(&self, path: &str) -> Result<Url> {
@@ -208,7 +232,8 @@ impl DashboardClient {
             .get(self.join(path)?)
             .headers(headers)
             .send()
-            .await?;
+            .await
+            .map_err(map_request_error)?;
         parse_response(response).await
     }
 
@@ -225,8 +250,17 @@ impl DashboardClient {
             .headers(headers)
             .json(body)
             .send()
-            .await?;
+            .await
+            .map_err(map_request_error)?;
         parse_response(response).await
+    }
+}
+
+fn map_request_error(error: reqwest::Error) -> anyhow::Error {
+    if error.is_timeout() {
+        anyhow::anyhow!("dashboard API request timed out")
+    } else {
+        error.into()
     }
 }
 
@@ -247,7 +281,7 @@ async fn parse_response<T: DeserializeOwned>(
     response: reqwest::Response,
 ) -> Result<ApiEnvelope<T>> {
     let status = response.status();
-    let text = response.text().await.unwrap_or_default();
+    let text = response.text().await.map_err(map_request_error)?;
     if !status.is_success() {
         anyhow::bail!("request failed with HTTP {status}: {text}");
     }
@@ -288,6 +322,10 @@ pub struct TokenData {
     pub refresh_token: String,
     #[serde(rename = "recordId", deserialize_with = "deserialize_string_or_number")]
     pub record_id: String,
+    #[serde(rename = "requestedPermissions")]
+    pub requested_permissions: Vec<String>,
+    #[serde(rename = "permissionModelVersion")]
+    pub permission_model_version: u32,
 }
 
 fn deserialize_string_or_number<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
@@ -308,8 +346,10 @@ pub struct WhoamiData {
     pub user_id: String,
     #[serde(rename = "tenantId")]
     pub tenant_id: String,
-    #[serde(default)]
-    pub permissions: Vec<String>,
+    #[serde(rename = "requestedPermissions", default)]
+    pub requested_permissions: Vec<String>,
+    #[serde(rename = "effectivePermissions", default)]
+    pub effective_permissions: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
@@ -434,13 +474,24 @@ mod tests {
         let client = DashboardClient::new("http://127.0.0.1:8036".to_string()).unwrap();
         let pkce = challenge_for_verifier("verifier");
         let url = client
-            .authorize_url("developers", "state-1", &pkce, None)
+            .authorize_url(
+                "analytics-read",
+                &["yc.integration.status.read".to_string()],
+                "state-1",
+                &pkce,
+                None,
+            )
             .unwrap();
         let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
 
         assert_eq!(url.path(), "/api/cli/auth/authorize");
         assert_eq!(query.get("responseType"), Some(&"code".to_string()));
-        assert_eq!(query.get("scope"), Some(&"developers".to_string()));
+        assert_eq!(query.get("profile"), Some(&"analytics-read".to_string()));
+        assert_eq!(
+            query.get("permissions"),
+            Some(&"yc.integration.status.read".to_string())
+        );
+        assert_eq!(query.get("scope"), None);
         assert_eq!(query.get("state"), Some(&"state-1".to_string()));
         assert_eq!(query.get("codeChallengeMethod"), Some(&"S256".to_string()));
         assert_eq!(query.get("codeChallenge"), Some(&pkce.code_challenge));
@@ -454,7 +505,8 @@ mod tests {
 
         let url = client
             .authorize_url(
-                "developers",
+                "basic",
+                &[],
                 "state-1",
                 &pkce,
                 Some("http://127.0.0.1:39123/callback"),
@@ -477,11 +529,30 @@ mod tests {
             "tokenType": "Bearer",
             "accessToken": "YCLI.access",
             "refreshToken": "YCLI.refresh",
-            "recordId": 1272676752573050880u64
+            "recordId": 1272676752573050880u64,
+            "requestedPermissions": ["yc.identity.current.read"],
+            "permissionModelVersion": 1
         }))
         .unwrap();
 
         assert_eq!(token.record_id, "1272676752573050880");
+    }
+
+    #[test]
+    fn token_data_requires_permission_snapshot_and_model_version() {
+        for missing_field in ["requestedPermissions", "permissionModelVersion"] {
+            let mut value = serde_json::json!({
+                "tokenType": "Bearer",
+                "accessToken": "YCLI.access",
+                "refreshToken": "YCLI.refresh",
+                "recordId": "record-1",
+                "requestedPermissions": ["yc.identity.current.read"],
+                "permissionModelVersion": 1
+            });
+            value.as_object_mut().unwrap().remove(missing_field);
+
+            assert!(serde_json::from_value::<TokenData>(value).is_err());
+        }
     }
 
     #[test]
