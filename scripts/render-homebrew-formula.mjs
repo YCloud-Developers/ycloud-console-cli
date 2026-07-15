@@ -72,7 +72,7 @@ class Ycloud < Formula
   end
 
   def install
-    bin.install "package/bin/ycloud"
+    bin.install "bin/ycloud"
   end
 
   test do

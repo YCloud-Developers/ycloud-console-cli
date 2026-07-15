@@ -46,6 +46,7 @@ test("renders a public npm-backed Homebrew formula", () => {
     formula,
     /https:\/\/registry\.npmjs\.org\/@ycloud-ai\/console-cli-darwin-arm64\/-\/console-cli-darwin-arm64-9\.8\.7\.tgz/,
   );
-  assert.match(formula, /bin\.install "package\/bin\/ycloud"/);
+  assert.match(formula, /bin\.install "bin\/ycloud"/);
+  assert.doesNotMatch(formula, /bin\.install "package\/bin\/ycloud"/);
   assert.doesNotMatch(formula, /github\.com.*releases\/download/);
 });
