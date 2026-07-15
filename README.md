@@ -17,7 +17,7 @@ Manual copy-paste authorization code input is still available with `ycloud login
 
 ## Installation
 
-After the first public release, install the CLI with npm:
+Install the CLI with npm (Node.js 18 or later):
 
 ```bash
 npm install --global @ycloud-ai/console-cli
