@@ -51,7 +51,7 @@ for (const [packageName, version] of Object.entries(
 }
 
 const tag = process.env.GITHUB_REF_NAME;
-if (tag && tag !== `v${cargoVersion}`) {
+if (process.env.GITHUB_REF_TYPE === "tag" && tag !== `v${cargoVersion}`) {
   throw new Error(`tag ${tag} does not match version v${cargoVersion}`);
 }
 
