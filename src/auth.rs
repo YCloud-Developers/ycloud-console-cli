@@ -26,6 +26,8 @@ use crate::{
 };
 
 pub async fn login(client: &DashboardClient, config_path: &Path, args: LoginArgs) -> Result<()> {
+    let profile = args.profile.as_str().to_string();
+    let requested_permissions = args.permissions.clone();
     let pkce = match args.code_verifier {
         Some(verifier) => pkce::challenge_for_verifier(&verifier),
         None => pkce::generate_pkce_pair(),
@@ -36,7 +38,7 @@ pub async fn login(client: &DashboardClient, config_path: &Path, args: LoginArgs
     let manual = args.manual || args.code.is_some();
     let (authorize_url, listener) = if manual {
         (
-            client.authorize_url(&args.scope, &state, &pkce, None)?,
+            client.authorize_url(&profile, &requested_permissions, &state, &pkce, None)?,
             None,
         )
     } else {
@@ -44,7 +46,13 @@ pub async fn login(client: &DashboardClient, config_path: &Path, args: LoginArgs
             .context("failed to bind localhost callback listener")?;
         let redirect_uri = format!("http://{}/callback", listener.local_addr()?);
         (
-            client.authorize_url(&args.scope, &state, &pkce, Some(&redirect_uri))?,
+            client.authorize_url(
+                &profile,
+                &requested_permissions,
+                &state,
+                &pkce,
+                Some(&redirect_uri),
+            )?,
             Some(listener),
         )
     };
@@ -90,7 +98,7 @@ pub async fn login(client: &DashboardClient, config_path: &Path, args: LoginArgs
             access_token: token.access_token.clone(),
             refresh_token: token.refresh_token.clone(),
             record_id: token.record_id.clone(),
-            scope: args.scope,
+            requested_permissions: token.requested_permissions.clone(),
             tenant_id: None,
             user_id: None,
         },
@@ -161,22 +169,27 @@ fn handle_callback(stream: &mut TcpStream, expected_state: &str) -> Result<Strin
     let mut code = None;
     let mut state = None;
     let mut error = None;
+    let mut error_description = None;
     for (key, value) in url.query_pairs() {
         match key.as_ref() {
             "code" => code = Some(value.into_owned()),
             "state" => state = Some(value.into_owned()),
             "error" => error = Some(value.into_owned()),
+            "error_description" => error_description = Some(value.into_owned()),
             _ => {}
         }
     }
 
-    if let Some(error) = error {
-        write_callback_response(stream, 400, "yc login authorization failed")?;
-        anyhow::bail!("dashboard authorization failed: {error}");
-    }
     if state.as_deref() != Some(expected_state) {
         write_callback_response(stream, 400, "yc login state mismatch")?;
         anyhow::bail!("browser callback state does not match login request");
+    }
+    if let Some(error) = error {
+        write_callback_response(stream, 400, "yc login authorization failed")?;
+        if let Some(description) = error_description.filter(|value| !value.trim().is_empty()) {
+            anyhow::bail!("dashboard authorization failed: {error}: {description}");
+        }
+        anyhow::bail!("dashboard authorization failed: {error}");
     }
     let code = code.context("browser callback did not include authorization code")?;
     write_callback_response(
@@ -235,7 +248,14 @@ pub async fn whoami(client: &DashboardClient, config_path: &Path) -> Result<()> 
 
     println!("userId: {}", identity.user_id);
     println!("tenantId: {}", identity.tenant_id);
-    println!("permissions: {}", identity.permissions.join(","));
+    println!(
+        "requestedPermissions: {}",
+        identity.requested_permissions.join(",")
+    );
+    println!(
+        "effectivePermissions: {}",
+        identity.effective_permissions.join(",")
+    );
     Ok(())
 }
 
@@ -426,6 +446,7 @@ pub async fn refresh(client: &DashboardClient, config_path: &Path) -> Result<()>
     config.auth.access_token = token.access_token;
     config.auth.refresh_token = token.refresh_token;
     config.auth.record_id = token.record_id;
+    config.auth.requested_permissions = token.requested_permissions;
     config.save(config_path)?;
     println!("Token refreshed.");
     Ok(())
@@ -453,8 +474,20 @@ fn prompt(label: &str) -> Result<String> {
 }
 
 fn ensure_ycli_token(token: &TokenData) -> Result<()> {
+    if token.token_type != "Bearer" {
+        anyhow::bail!("backend returned an unsupported token type");
+    }
     if !token.access_token.starts_with("YCLI.") {
         anyhow::bail!("backend returned a non-YCLI access token");
+    }
+    if token.permission_model_version != 1 {
+        anyhow::bail!(
+            "unsupported CLI permission model version: {}",
+            token.permission_model_version
+        );
+    }
+    if token.requested_permissions.is_empty() {
+        anyhow::bail!("backend returned an empty CLI permission snapshot");
     }
     Ok(())
 }
@@ -486,4 +519,65 @@ fn now_millis() -> Result<i64> {
 fn random_state_suffix() -> String {
     let bytes: [u8; 8] = rand::random();
     URL_SAFE_NO_PAD.encode(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::handle_callback;
+    use anyhow::Result;
+    use std::{
+        io::{Read, Write},
+        net::{TcpListener, TcpStream},
+    };
+
+    #[test]
+    fn callback_error_includes_decoded_description() {
+        let (result, response) = invoke_callback(
+            "/callback?error=invalid_scope&error_description=permission%20is%20not%20active%3A%20yc.member.list.read&state=expected",
+            "expected",
+        );
+
+        let error = result.expect_err("authorization rejection should fail");
+        assert_eq!(
+            error.to_string(),
+            "dashboard authorization failed: invalid_scope: permission is not active: yc.member.list.read"
+        );
+        assert!(response.starts_with("HTTP/1.1 400 Bad Request"));
+    }
+
+    #[test]
+    fn callback_error_validates_state_before_reporting_authorization_error() {
+        let (result, response) = invoke_callback(
+            "/callback?error=access_denied&error_description=permission%20denied&state=unexpected",
+            "expected",
+        );
+
+        let error = result.expect_err("mismatched state should fail");
+        assert_eq!(
+            error.to_string(),
+            "browser callback state does not match login request"
+        );
+        assert!(response.contains("yc login state mismatch"));
+    }
+
+    fn invoke_callback(target: &str, expected_state: &str) -> (Result<String>, String) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind callback listener");
+        let mut browser = TcpStream::connect(listener.local_addr().expect("listener address"))
+            .expect("connect callback client");
+        let (mut callback, _) = listener.accept().expect("accept callback client");
+        write!(
+            browser,
+            "GET {target} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+        )
+        .expect("write callback request");
+
+        let result = handle_callback(&mut callback, expected_state);
+        drop(callback);
+
+        let mut response = String::new();
+        browser
+            .read_to_string(&mut response)
+            .expect("read callback response");
+        (result, response)
+    }
 }

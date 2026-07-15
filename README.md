@@ -9,7 +9,7 @@
 - `yc tenants list` lists tenants available to the current Console CLI token.
 - `yc integrations status` lists Dashboard integration enabled status through the CLI read-only adapter.
 - `yc contacts metadata` lists contact sources, tags, segments, and segment filters through the CLI read-only adapter.
-- `yc analytics ...` calls the same Dashboard analytics APIs used by `/app/dashboard/analytics`.
+- `yc contacts list` and `yc analytics ...` use permission-gated `/api/cli/read/**` compatibility adapters; `YCLI.` tokens do not call ordinary Dashboard paths.
 - `yc refresh` rotates the refresh token.
 - `yc logout` revokes the current token and removes the local profile.
 
@@ -26,7 +26,7 @@ Start account-service, security, and web with the same route group:
 Then run:
 
 ```bash
-cargo run -- login --dashboard-url http://127.0.0.1:8036 --scope developers
+cargo run -- login --dashboard-url http://127.0.0.1:8036 --profile readonly
 ```
 
 The CLI opens a browser and waits for Dashboard to redirect back to `http://127.0.0.1:<port>/callback`.
@@ -34,7 +34,7 @@ The CLI opens a browser and waits for Dashboard to redirect back to `http://127.
 If automatic browser login is not available, use the manual fallback:
 
 ```bash
-cargo run -- login --dashboard-url http://127.0.0.1:8036 --scope developers --manual
+cargo run -- login --dashboard-url http://127.0.0.1:8036 --profile readonly --manual
 ```
 
 In manual mode, open the printed URL in a browser that is already logged in to Dashboard, copy the returned `data.code`, then paste it into the CLI prompt.
@@ -42,7 +42,7 @@ In manual mode, open the printed URL in a browser that is already logged in to D
 ## Commands
 
 ```bash
-yc login --dashboard-url http://127.0.0.1:8036 --scope developers
+yc login --dashboard-url http://127.0.0.1:8036 --profile readonly
 yc whoami
 yc tenants list
 yc integrations status
@@ -58,7 +58,7 @@ yc logout
 For dev-blue analytics testing:
 
 ```bash
-cargo run -- login --dashboard-url https://www-dev-blue.ycloud.com --scope "developers whatsapp:manager:analytics"
+cargo run -- login --dashboard-url https://www-dev-blue.ycloud.com --profile analytics-read
 cargo run -- analytics outline
 cargo run -- analytics overview --timezone GMT+8
 cargo run -- analytics logs --page-no 1 --page-size 10
@@ -90,6 +90,20 @@ The expected result is:
 - `contacts metadata` returns contact `segmentFilters`, `segments`, `sources`, and `tags`.
 
 Backend online release verified on 2026-07-10 with `yunpian-attila-web` build `#816`.
+
+## Permission Profiles
+
+`yc login` defaults to `--profile basic`. Available profiles are `basic`, `contacts-read`, `analytics-read`, `integrations-read`, `readonly`, and `custom`. Add individual ACTIVE permissions by repeating `--permission`:
+
+```bash
+yc login --profile basic \
+  --permission yc.integration.status.read \
+  --permission yc.contact.record.read
+```
+
+Profiles are expanded by the backend. The token and local config store only the resulting atomic requested permissions. PLANNED permissions, including all currently catalogued writes, cannot be requested. HTTP requests have a 30-second total timeout.
+
+In the default browser flow, an authorization rejection returns to the localhost callback with `error`, `error_description`, and `state`. The CLI validates `state` before reporting the rejection, exits immediately, and does not exchange a token or write the profile.
 
 ## Config
 

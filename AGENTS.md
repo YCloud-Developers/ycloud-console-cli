@@ -8,12 +8,12 @@ This is the Console/Dashboard-oriented YCloud CLI. It is separate from the exist
 
 - `cargo fmt -- --check` checks formatting.
 - `cargo test` runs unit and integration tests.
-- `cargo run -- login --dashboard-url http://127.0.0.1:8036 --scope developers` runs the local browser-grant flow.
+- `cargo run -- login --dashboard-url http://127.0.0.1:8036 --profile readonly` runs the local browser-grant flow.
 
 ## Auth Model
 
 - `yc login` uses Dashboard browser grant plus PKCE.
-- CLI scope values are Dashboard role permission keys such as `developers`, not generic OAuth `read` / `write`.
+- CLI grants use stable atomic permissions such as `yc.contact.record.read`. `--profile` selects a backend-owned preset and repeatable `--permission` adds atoms; Dashboard role authorities remain an internal backend mapping only.
 - Access tokens use the backend `YCLI.` token prefix.
 - Local config is stored under `~/.yc/config.toml`.
 - Do not log or print access tokens, refresh tokens, authorization codes, or Dashboard cookies.

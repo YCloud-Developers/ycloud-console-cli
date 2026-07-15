@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 pub const DEFAULT_DASHBOARD_URL: &str = "http://127.0.0.1:8036";
 
@@ -79,12 +79,15 @@ pub enum AnalyticsCommand {
 
 #[derive(Debug, Args)]
 pub struct LoginArgs {
+    #[arg(long, value_enum, default_value_t = PermissionProfile::Basic)]
+    pub profile: PermissionProfile,
+
     #[arg(
-        long,
-        default_value = "developers",
-        help = "Space-separated Dashboard permission scopes to request"
+        long = "permission",
+        value_name = "PERMISSION",
+        help = "Additional atomic CLI permission; may be repeated"
     )]
-    pub scope: String,
+    pub permissions: Vec<String>,
 
     #[arg(long, help = "Authorization code returned by /api/cli/auth/authorize")]
     pub code: Option<String>,
@@ -100,6 +103,35 @@ pub struct LoginArgs {
         help = "Use manual copy/paste authorization code flow instead of localhost callback"
     )]
     pub manual: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum PermissionProfile {
+    Basic,
+    ContactsRead,
+    AnalyticsRead,
+    IntegrationsRead,
+    Readonly,
+    Custom,
+}
+
+impl PermissionProfile {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Basic => "basic",
+            Self::ContactsRead => "contacts-read",
+            Self::AnalyticsRead => "analytics-read",
+            Self::IntegrationsRead => "integrations-read",
+            Self::Readonly => "readonly",
+            Self::Custom => "custom",
+        }
+    }
+}
+
+impl std::fmt::Display for PermissionProfile {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -279,4 +311,45 @@ pub struct AnalyticsCallingLogsArgs {
         help = "Comma-separated WhatsApp phone number ids"
     )]
     pub phone_number_ids: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn login_defaults_to_basic_profile_without_explicit_permissions() {
+        let cli = Cli::try_parse_from(["yc", "login", "--manual"]).unwrap();
+
+        let Command::Login(args) = cli.command else {
+            panic!("expected login command");
+        };
+        assert_eq!(args.profile, PermissionProfile::Basic);
+        assert!(args.permissions.is_empty());
+    }
+
+    #[test]
+    fn login_accepts_profile_and_repeated_permission_flags() {
+        let cli = Cli::try_parse_from([
+            "yc",
+            "login",
+            "--profile",
+            "analytics-read",
+            "--permission",
+            "yc.integration.status.read",
+            "--permission",
+            "yc.contact.record.read",
+            "--manual",
+        ])
+        .unwrap();
+
+        let Command::Login(args) = cli.command else {
+            panic!("expected login command");
+        };
+        assert_eq!(args.profile, PermissionProfile::AnalyticsRead);
+        assert_eq!(
+            args.permissions,
+            ["yc.integration.status.read", "yc.contact.record.read"]
+        );
+    }
 }
