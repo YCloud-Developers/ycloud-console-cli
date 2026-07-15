@@ -109,7 +109,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          find release-artifacts -name '*.tar.gz' -exec sha256sum {} + > SHA256SUMS
+          node scripts/generate-release-checksums.mjs release-artifacts SHA256SUMS
           gh release create "${GITHUB_REF_NAME}" \
             --draft \
             --generate-notes \
