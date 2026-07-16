@@ -1,6 +1,6 @@
 {
   "name": "@ycloud-ai/console-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "YCloud Console CLI using browser grant authentication",
   "homepage": "https://www.ycloud.com",
   "license": "MIT",
@@ -15,10 +15,10 @@
     "node": ">=18"
   },
   "optionalDependencies": {
-    "@ycloud-ai/console-cli-darwin-arm64": "0.1.0",
-    "@ycloud-ai/console-cli-darwin-x64": "0.1.0",
-    "@ycloud-ai/console-cli-linux-arm64": "0.1.0",
-    "@ycloud-ai/console-cli-linux-x64": "0.1.0"
+    "@ycloud-ai/console-cli-darwin-arm64": "0.1.1",
+    "@ycloud-ai/console-cli-darwin-x64": "0.1.1",
+    "@ycloud-ai/console-cli-linux-arm64": "0.1.1",
+    "@ycloud-ai/console-cli-linux-x64": "0.1.1"
   },
   "publishConfig": {
     "access": "public"
