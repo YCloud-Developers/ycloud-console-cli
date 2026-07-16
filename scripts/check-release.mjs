@@ -9,6 +9,11 @@ if (!cargoVersion) {
   throw new Error("Cargo.toml package version is missing");
 }
 
+const expectedRepository = {
+  type: "git",
+  url: "https://github.com/YCloud-Developers/ycloud-console-cli",
+};
+
 const packageFiles = [
   "package.json",
   "npm/console-cli/package.json",
@@ -29,6 +34,14 @@ for (const relativePath of packageFiles) {
   }
   if (packageJson.license !== "MIT") {
     throw new Error(`${relativePath} must declare the MIT license`);
+  }
+  if (
+    packageJson.repository?.type !== expectedRepository.type ||
+    packageJson.repository?.url !== expectedRepository.url
+  ) {
+    throw new Error(
+      `${relativePath} repository must be ${expectedRepository.url}`,
+    );
   }
 
   const packageDirectory = path.dirname(path.join(root, relativePath));

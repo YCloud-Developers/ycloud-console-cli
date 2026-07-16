@@ -3,6 +3,10 @@
   "version": "0.1.1",
   "description": "YCloud Console CLI native binary for Linux x64",
   "homepage": "https://www.ycloud.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YCloud-Developers/ycloud-console-cli"
+  },
   "license": "MIT",
   "os": ["linux"],
   "cpu": ["x64"],
