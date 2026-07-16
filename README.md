@@ -7,9 +7,10 @@
 - `ycloud login` uses Dashboard browser grant + PKCE, receives the code through a localhost callback by default, and stores `YCLI.` tokens.
 - `ycloud whoami` reads the current Console CLI identity.
 - `ycloud tenants list` lists tenants available to the current Console CLI token.
-- `ycloud integrations status` lists Dashboard integration enabled status through the CLI read-only adapter.
-- `ycloud contacts metadata` lists contact sources, tags, segments, and segment filters through the CLI read-only adapter.
-- `ycloud contacts list` and `ycloud analytics ...` use permission-gated `/api/cli/read/**` compatibility adapters; `YCLI.` tokens do not call ordinary Dashboard paths.
+- `ycloud integrations status` and `ycloud contacts metadata` use the stable `/api/cli/v1/**` contract.
+- `ycloud analytics outline` and `ycloud analytics overview` use the stable WhatsApp analytics contract. The CLI sends RFC 3339 time values and an IANA timezone such as `Asia/Shanghai`.
+- Stable commands fall back to the matching `/api/cli/read/**` compatibility adapter only when the server returns HTTP 404 or 405 during a rolling upgrade. Authentication, authorization, validation, and server errors are never retried through the legacy adapter.
+- `ycloud contacts list`, `ycloud analytics logs`, and `ycloud analytics calling-logs` remain compatibility-only P0 commands. `YCLI.` tokens do not call ordinary Dashboard paths.
 - `ycloud refresh` rotates the refresh token.
 - `ycloud logout` revokes the current token and removes the local profile.
 
@@ -67,7 +68,7 @@ ycloud refresh
 ycloud logout
 ```
 
-Analytics commands default to the last 7 days. Use millisecond timestamps to pin the same range as the Dashboard page:
+Analytics commands default to the last 7 days. CLI flags continue to accept millisecond timestamps; stable WhatsApp analytics requests convert them to RFC 3339 before sending. `analytics overview` defaults to the IANA timezone `Asia/Shanghai`:
 
 ```bash
 ycloud analytics overview --start-time 1782921600000 --end-time 1783526400000 --from 8613800138000 --region-code CN --message-category marketing,utility
