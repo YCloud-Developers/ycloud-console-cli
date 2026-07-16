@@ -178,8 +178,8 @@ pub struct AnalyticsOverviewArgs {
 
     #[arg(
         long,
-        default_value = "GMT+8",
-        help = "Analytics timezone, matching Dashboard format such as GMT+8"
+        default_value = "Asia/Shanghai",
+        help = "IANA analytics timezone, for example Asia/Shanghai or UTC"
     )]
     pub timezone: String,
 

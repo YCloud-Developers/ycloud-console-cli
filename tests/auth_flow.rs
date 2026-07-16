@@ -507,3 +507,116 @@ async fn response_body_timeout_is_not_hidden_as_a_parse_error() {
     );
     server.join().unwrap();
 }
+
+#[tokio::test]
+async fn integrations_status_prefers_v1_without_legacy_request() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/cli/v1/integrations/status"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "msg": "OK",
+            "data": [{"type": "SHOP", "integration": "SHOPIFY", "status": "ENABLED"}],
+            "error": null,
+            "requestId": "req-v1",
+            "traceId": "trace-v1",
+            "warnings": [],
+            "futureField": true
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/cli/read/integrations/status"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let client = DashboardClient::new(server.uri()).unwrap();
+    let response = client.integrations_status("YCLI.access").await.unwrap();
+
+    assert_eq!(response.request_id.as_deref(), Some("req-v1"));
+    assert!(response.data.is_some());
+}
+
+#[tokio::test]
+async fn permission_denial_does_not_fallback_and_surfaces_correlation() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/cli/v1/integrations/status"))
+        .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+            "code": 403,
+            "msg": "Permission denied",
+            "data": null,
+            "error": {"code": "permission_denied", "message": "Permission denied", "retryable": false, "details": {}},
+            "requestId": "req-denied",
+            "traceId": "trace-denied",
+            "warnings": []
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/cli/read/integrations/status"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let client = DashboardClient::new(server.uri()).unwrap();
+    let error = client
+        .integrations_status("YCLI.access")
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        error.contains("permission_denied"),
+        "unexpected error: {error}"
+    );
+    assert!(error.contains("req-denied"), "unexpected error: {error}");
+    assert!(error.contains("trace-denied"), "unexpected error: {error}");
+}
+
+#[tokio::test]
+async fn analytics_v1_serializes_rfc3339_and_iana_timezone() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/cli/v1/whatsapp/analytics/delivery"))
+        .and(body_json(serde_json::json!({
+            "startTime": "1970-01-01T00:00:00.000Z",
+            "endTime": "1970-01-01T00:00:01.000Z",
+            "timezone": "UTC",
+            "regionCode": "US",
+            "messageCategory": "utility"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0, "msg": "OK", "data": {"dataPoints": []}, "error": null,
+            "requestId": "req-analytics", "traceId": "trace-analytics", "warnings": []
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/cli/read/whatsapp/analytics/delivery"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let client = DashboardClient::new(server.uri()).unwrap();
+    let request = ycloud_console_cli::http::AnalyticsOverviewRequest {
+        start_time: 0,
+        end_time: 1000,
+        timezone: "UTC",
+        from: None,
+        region_code: Some("US"),
+        message_category: Some("utility"),
+    };
+
+    client
+        .whatsapp_delivery_analytics("YCLI.access", &request)
+        .await
+        .unwrap();
+}

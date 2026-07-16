@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
+use chrono::SecondsFormat;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::StatusCode;
 use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use std::time::Duration;
 use url::Url;
@@ -101,13 +103,21 @@ impl DashboardClient {
     }
 
     pub async fn whoami(&self, access_token: &str) -> Result<ApiEnvelope<WhoamiData>> {
-        self.get_json("/api/cli/auth/whoami", Some(access_token))
-            .await
+        self.get_json_with_fallback(
+            "/api/cli/v1/whoami",
+            "/api/cli/auth/whoami",
+            Some(access_token),
+        )
+        .await
     }
 
     pub async fn tenants(&self, access_token: &str) -> Result<ApiEnvelope<TenantsData>> {
-        self.get_json("/api/cli/auth/tenants/list", Some(access_token))
-            .await
+        self.get_json_with_fallback(
+            "/api/cli/v1/tenants",
+            "/api/cli/auth/tenants/list",
+            Some(access_token),
+        )
+        .await
     }
 
     pub async fn contacts_search(
@@ -127,16 +137,24 @@ impl DashboardClient {
         &self,
         access_token: &str,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
-        self.get_json("/api/cli/read/contacts/metadata", Some(access_token))
-            .await
+        self.get_json_with_fallback(
+            "/api/cli/v1/contacts/metadata",
+            "/api/cli/read/contacts/metadata",
+            Some(access_token),
+        )
+        .await
     }
 
     pub async fn integrations_status(
         &self,
         access_token: &str,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
-        self.get_json("/api/cli/read/integrations/status", Some(access_token))
-            .await
+        self.get_json_with_fallback(
+            "/api/cli/v1/integrations/status",
+            "/api/cli/read/integrations/status",
+            Some(access_token),
+        )
+        .await
     }
 
     pub async fn whatsapp_analytics_outline(
@@ -144,11 +162,17 @@ impl DashboardClient {
         access_token: &str,
         request: AnalyticsRangeRequest,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
-        let path = format!(
+        let primary = format!(
+            "/api/cli/v1/whatsapp/analytics/outline?startTime={}&endTime={}",
+            millis_to_rfc3339(request.start_time)?,
+            millis_to_rfc3339(request.end_time)?
+        );
+        let legacy = format!(
             "/api/cli/read/whatsapp/analytics/outline?startTime={}&endTime={}",
             request.start_time, request.end_time
         );
-        self.get_json(&path, Some(access_token)).await
+        self.get_json_with_fallback(&primary, &legacy, Some(access_token))
+            .await
     }
 
     pub async fn whatsapp_delivery_analytics(
@@ -156,10 +180,13 @@ impl DashboardClient {
         access_token: &str,
         request: &AnalyticsOverviewRequest<'_>,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
-        self.post_json(
+        let stable = AnalyticsV1Request::try_from(*request)?;
+        self.post_json_with_fallback(
+            "/api/cli/v1/whatsapp/analytics/delivery",
+            &stable,
             "/api/cli/read/whatsapp/analytics/delivery",
-            Some(access_token),
             request,
+            Some(access_token),
         )
         .await
     }
@@ -169,10 +196,13 @@ impl DashboardClient {
         access_token: &str,
         request: &AnalyticsOverviewRequest<'_>,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
-        self.post_json(
+        let stable = AnalyticsV1Request::try_from(*request)?;
+        self.post_json_with_fallback(
+            "/api/cli/v1/whatsapp/analytics/message-detail",
+            &stable,
             "/api/cli/read/whatsapp/analytics/message-detail",
-            Some(access_token),
             request,
+            Some(access_token),
         )
         .await
     }
@@ -182,10 +212,13 @@ impl DashboardClient {
         access_token: &str,
         request: &AnalyticsOverviewRequest<'_>,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
-        self.post_json(
+        let stable = AnalyticsV1Request::try_from(*request)?;
+        self.post_json_with_fallback(
+            "/api/cli/v1/whatsapp/analytics/failure-reasons",
+            &stable,
             "/api/cli/read/whatsapp/analytics/failure-reasons",
-            Some(access_token),
             request,
+            Some(access_token),
         )
         .await
     }
@@ -222,20 +255,30 @@ impl DashboardClient {
             .with_context(|| format!("failed to build dashboard api url for {path}"))
     }
 
-    async fn get_json<T: DeserializeOwned>(
+    async fn get_json_with_fallback<T: DeserializeOwned>(
         &self,
-        path: &str,
+        primary_path: &str,
+        legacy_path: &str,
         token: Option<&str>,
     ) -> Result<ApiEnvelope<T>> {
         let headers = headers(token)?;
         let request = async {
-            let response = self
+            let mut response = self
                 .http
-                .get(self.join(path)?)
-                .headers(headers)
+                .get(self.join(primary_path)?)
+                .headers(headers.clone())
                 .send()
                 .await
                 .map_err(map_request_error)?;
+            if should_fallback(response.status()) {
+                response = self
+                    .http
+                    .get(self.join(legacy_path)?)
+                    .headers(headers)
+                    .send()
+                    .await
+                    .map_err(map_request_error)?;
+            }
             parse_response(response).await
         };
         tokio::time::timeout(self.timeout, request)
@@ -265,6 +308,55 @@ impl DashboardClient {
             .await
             .map_err(|_| anyhow::anyhow!("dashboard API request timed out"))?
     }
+
+    async fn post_json_with_fallback<
+        T: DeserializeOwned,
+        P: Serialize + ?Sized,
+        L: Serialize + ?Sized,
+    >(
+        &self,
+        primary_path: &str,
+        primary_body: &P,
+        legacy_path: &str,
+        legacy_body: &L,
+        token: Option<&str>,
+    ) -> Result<ApiEnvelope<T>> {
+        let headers = headers(token)?;
+        let request = async {
+            let mut response = self
+                .http
+                .post(self.join(primary_path)?)
+                .headers(headers.clone())
+                .json(primary_body)
+                .send()
+                .await
+                .map_err(map_request_error)?;
+            if should_fallback(response.status()) {
+                response = self
+                    .http
+                    .post(self.join(legacy_path)?)
+                    .headers(headers)
+                    .json(legacy_body)
+                    .send()
+                    .await
+                    .map_err(map_request_error)?;
+            }
+            parse_response(response).await
+        };
+        tokio::time::timeout(self.timeout, request)
+            .await
+            .map_err(|_| anyhow::anyhow!("dashboard API request timed out"))?
+    }
+}
+
+fn should_fallback(status: StatusCode) -> bool {
+    status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED
+}
+
+fn millis_to_rfc3339(value: i64) -> Result<String> {
+    chrono::DateTime::from_timestamp_millis(value)
+        .map(|date_time| date_time.to_rfc3339_opts(SecondsFormat::Millis, true))
+        .with_context(|| format!("analytics time is outside the RFC 3339 range: {value}"))
 }
 
 fn map_request_error(error: reqwest::Error) -> anyhow::Error {
@@ -294,6 +386,17 @@ async fn parse_response<T: DeserializeOwned>(
     let status = response.status();
     let text = response.text().await.map_err(map_request_error)?;
     if !status.is_success() {
+        if let Ok(envelope) = serde_json::from_str::<ApiEnvelope<serde_json::Value>>(&text) {
+            if let Some(error) = envelope.error {
+                anyhow::bail!(
+                    "request failed with HTTP {status}: {}: {} (requestId={}, traceId={})",
+                    error.code,
+                    error.message,
+                    envelope.request_id.unwrap_or_default(),
+                    envelope.trace_id.unwrap_or_default()
+                );
+            }
+        }
         anyhow::bail!("request failed with HTTP {status}: {text}");
     }
     let envelope: ApiEnvelope<T> =
@@ -314,6 +417,42 @@ pub struct ApiEnvelope<T> {
     #[serde(alias = "msg")]
     pub message: Option<String>,
     pub data: Option<T>,
+    #[serde(default)]
+    pub error: Option<ApiError>,
+    #[serde(rename = "requestId", default)]
+    pub request_id: Option<String>,
+    #[serde(rename = "traceId", default)]
+    pub trace_id: Option<String>,
+    #[serde(default)]
+    pub pagination: Option<ApiPagination>,
+    #[serde(default)]
+    pub warnings: Vec<ApiWarning>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ApiError {
+    pub code: String,
+    pub message: String,
+    #[serde(default)]
+    pub retryable: bool,
+    #[serde(default)]
+    pub details: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ApiPagination {
+    #[serde(rename = "nextCursor", default)]
+    pub next_cursor: Option<String>,
+    #[serde(rename = "hasMore")]
+    pub has_more: bool,
+    #[serde(default)]
+    pub total: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ApiWarning {
+    pub code: String,
+    pub message: String,
 }
 
 impl<T> ApiEnvelope<T> {
@@ -408,7 +547,7 @@ pub struct AnalyticsRangeRequest {
     pub end_time: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Copy, Clone)]
 pub struct AnalyticsOverviewRequest<'a> {
     #[serde(rename = "startTime")]
     pub start_time: i64,
@@ -421,6 +560,36 @@ pub struct AnalyticsOverviewRequest<'a> {
     pub region_code: Option<&'a str>,
     #[serde(rename = "messageCategory", skip_serializing_if = "Option::is_none")]
     pub message_category: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+struct AnalyticsV1Request<'a> {
+    #[serde(rename = "startTime")]
+    start_time: String,
+    #[serde(rename = "endTime")]
+    end_time: String,
+    timezone: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    from: Option<&'a str>,
+    #[serde(rename = "regionCode", skip_serializing_if = "Option::is_none")]
+    region_code: Option<&'a str>,
+    #[serde(rename = "messageCategory", skip_serializing_if = "Option::is_none")]
+    message_category: Option<&'a str>,
+}
+
+impl<'a> TryFrom<AnalyticsOverviewRequest<'a>> for AnalyticsV1Request<'a> {
+    type Error = anyhow::Error;
+
+    fn try_from(request: AnalyticsOverviewRequest<'a>) -> Result<Self> {
+        Ok(Self {
+            start_time: millis_to_rfc3339(request.start_time)?,
+            end_time: millis_to_rfc3339(request.end_time)?,
+            timezone: request.timezone,
+            from: request.from,
+            region_code: request.region_code,
+            message_category: request.message_category,
+        })
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -575,5 +744,42 @@ mod tests {
         .unwrap();
 
         assert_eq!(envelope.message.as_deref(), Some("forbidden"));
+        assert!(envelope.pagination.is_none());
+        assert!(envelope.warnings.is_empty());
+    }
+
+    #[test]
+    fn api_envelope_parses_stable_extensions() {
+        let envelope: ApiEnvelope<serde_json::Value> = serde_json::from_value(serde_json::json!({
+            "code": 403,
+            "msg": "Permission denied",
+            "data": null,
+            "error": {
+                "code": "permission_denied",
+                "message": "Permission denied",
+                "retryable": false,
+                "details": {"requiredPermission": "yc.integration.status.read"}
+            },
+            "requestId": "request-1",
+            "traceId": "trace-1",
+            "pagination": {"nextCursor": "cursor-2", "hasMore": true, "total": 42},
+            "warnings": [{"code": "partial", "message": "Partial data"}],
+            "futureField": true
+        }))
+        .unwrap();
+
+        assert_eq!(envelope.error.as_ref().unwrap().code, "permission_denied");
+        assert_eq!(
+            envelope.error.as_ref().unwrap().details.as_ref().unwrap()["requiredPermission"],
+            "yc.integration.status.read"
+        );
+        assert_eq!(
+            envelope.pagination.as_ref().unwrap().next_cursor.as_deref(),
+            Some("cursor-2")
+        );
+        assert!(envelope.pagination.as_ref().unwrap().has_more);
+        assert_eq!(envelope.pagination.as_ref().unwrap().total, Some(42));
+        assert_eq!(envelope.warnings[0].code, "partial");
+        assert_eq!(envelope.warnings[0].message, "Partial data");
     }
 }
