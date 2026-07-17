@@ -10,6 +10,7 @@
 - `ycloud integrations status` and `ycloud contacts metadata` use the stable `/api/cli/v1/**` contract.
 - `ycloud analytics outline` and `ycloud analytics overview` use the stable WhatsApp analytics contract. The CLI sends RFC 3339 time values and an IANA timezone such as `Asia/Shanghai`.
 - Stable commands fall back to the matching `/api/cli/read/**` compatibility adapter only when the server returns HTTP 404 or 405 during a rolling upgrade. Authentication, authorization, validation, and server errors are never retried through the legacy adapter.
+- Every HTTP attempt sends a new `X-Request-Id`; attempts from one command share a non-secret invocation ID and mode. Typed `rate_limited` responses never trigger legacy fallback.
 - `ycloud contacts list`, `ycloud analytics logs`, and `ycloud analytics calling-logs` remain compatibility-only P0 commands. `YCLI.` tokens do not call ordinary Dashboard paths.
 - `ycloud refresh` rotates the refresh token.
 - `ycloud logout` revokes the current token and removes the local profile.
@@ -103,6 +104,21 @@ ycloud login --profile basic \
 ```
 
 Profiles are expanded by the backend. The token and local config store only the resulting atomic requested permissions. PLANNED permissions, including all currently catalogued writes, cannot be requested. HTTP requests have a 30-second total timeout.
+
+## Rate-limit retries
+
+The CLI automatically retries only operations classified as `SAFE_READ`, and only when the
+server returns HTTP 429 with `error.code=rate_limited` and `error.retryable=true`.
+`Retry-After` takes precedence; otherwise the CLI uses exponential backoff with full jitter.
+Authentication lifecycle requests and future writes are never retried.
+
+Interactive mode allows at most 3 attempts, 5 seconds of cumulative waiting, and a
+30-second overall deadline. Automation mode allows at most 4 attempts, 20 seconds of waiting,
+and a 60-second deadline. Use `--automation`, or set
+`YCLOUD_INVOCATION_MODE=automation`; without either, non-TTY execution selects automation
+mode and terminal execution selects interactive mode. If the server's requested delay does
+not fit the remaining budget, the command exits immediately and reports only safe
+request/trace identifiers and retry guidance.
 
 In the default browser flow, an authorization rejection returns to the localhost callback with `error`, `error_description`, and `state`. The CLI validates `state` before reporting the rejection, exits immediately, and does not exchange a token or write the profile.
 

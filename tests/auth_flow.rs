@@ -1,7 +1,7 @@
 use std::{
     io::{Read, Write},
     net::TcpListener,
-    sync::mpsc,
+    sync::{mpsc, Arc, Mutex},
     thread,
     time::Duration,
 };
@@ -577,6 +577,108 @@ async fn permission_denial_does_not_fallback_and_surfaces_correlation() {
     );
     assert!(error.contains("req-denied"), "unexpected error: {error}");
     assert!(error.contains("trace-denied"), "unexpected error: {error}");
+}
+
+#[tokio::test]
+async fn safe_read_retries_typed_429_with_new_request_id_and_same_invocation() {
+    let server = MockServer::start().await;
+    let observed = Arc::new(Mutex::new(Vec::<(String, String, String)>::new()));
+    let calls = Arc::new(Mutex::new(0usize));
+    let observed_responder = Arc::clone(&observed);
+    let calls_responder = Arc::clone(&calls);
+    Mock::given(method("GET"))
+        .and(path("/api/cli/v1/integrations/status"))
+        .respond_with(move |request: &wiremock::Request| {
+            let request_id = request.headers["x-request-id"].to_str().unwrap().to_string();
+            let invocation_id = request.headers["x-ycloud-invocation-id"]
+                .to_str()
+                .unwrap()
+                .to_string();
+            let invocation_mode = request.headers["x-ycloud-invocation-mode"]
+                .to_str()
+                .unwrap()
+                .to_string();
+            observed_responder
+                .lock()
+                .unwrap()
+                .push((request_id, invocation_id, invocation_mode));
+            let mut calls = calls_responder.lock().unwrap();
+            *calls += 1;
+            if *calls == 1 {
+                ResponseTemplate::new(429)
+                    .insert_header("Retry-After", "0")
+                    .set_body_json(serde_json::json!({
+                        "code": 429,
+                        "msg": "Too many CLI requests",
+                        "data": null,
+                        "error": {"code": "rate_limited", "message": "Too many CLI requests", "retryable": true, "details": {"retryAfterSeconds": 0}},
+                        "requestId": "server-request-1",
+                        "traceId": "server-trace-1",
+                        "warnings": []
+                    }))
+            } else {
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "code": 0,
+                    "msg": "OK",
+                    "data": [],
+                    "error": null,
+                    "requestId": "server-request-2",
+                    "traceId": "server-trace-2",
+                    "warnings": []
+                }))
+            }
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/cli/read/integrations/status"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let client = DashboardClient::new(server.uri()).unwrap();
+    client.integrations_status("YCLI.access").await.unwrap();
+
+    let observed = observed.lock().unwrap();
+    assert_eq!(observed.len(), 2);
+    assert_ne!(observed[0].0, observed[1].0);
+    assert_eq!(observed[0].1, observed[1].1);
+    assert_eq!(observed[0].2, "interactive");
+    assert_eq!(observed[1].2, "interactive");
+}
+
+#[tokio::test]
+async fn auth_lifecycle_does_not_retry_typed_429() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/cli/auth/token"))
+        .respond_with(ResponseTemplate::new(429).set_body_json(serde_json::json!({
+            "code": 429,
+            "msg": "Too many CLI requests",
+            "data": null,
+            "error": {"code": "rate_limited", "message": "Too many CLI requests", "retryable": true, "details": {"retryAfterSeconds": 1}},
+            "requestId": "request-auth-limit",
+            "traceId": "trace-auth-limit",
+            "warnings": []
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = DashboardClient::new(server.uri()).unwrap();
+    let error = client
+        .exchange_token("authorization-code", "code-verifier")
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("rate_limited"), "unexpected error: {error}");
+    assert!(
+        error.contains("request-auth-limit"),
+        "unexpected error: {error}"
+    );
 }
 
 #[tokio::test]

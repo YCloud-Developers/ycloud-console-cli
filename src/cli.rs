@@ -1,7 +1,9 @@
-use std::path::PathBuf;
+use std::{io::IsTerminal, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
+
+use crate::http::InvocationMode;
 
 pub const DEFAULT_DASHBOARD_URL: &str = "https://www.ycloud.com";
 
@@ -14,6 +16,13 @@ pub struct Cli {
     #[arg(long, global = true, env = "YCLOUD_CONFIG")]
     pub config: Option<PathBuf>,
 
+    #[arg(
+        long,
+        global = true,
+        help = "Use automation retry budgets; overrides YCLOUD_INVOCATION_MODE and TTY detection"
+    )]
+    pub automation: bool,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -25,6 +34,23 @@ impl Cli {
         }
         let home = dirs::home_dir().context("failed to resolve home directory")?;
         Ok(home.join(".ycloud").join("config.toml"))
+    }
+
+    pub fn invocation_mode(&self) -> Result<InvocationMode> {
+        if self.automation {
+            return Ok(InvocationMode::Automation);
+        }
+        if let Ok(value) = std::env::var("YCLOUD_INVOCATION_MODE") {
+            return match value.trim().to_ascii_lowercase().as_str() {
+                "interactive" => Ok(InvocationMode::Interactive),
+                "automation" => Ok(InvocationMode::Automation),
+                _ => anyhow::bail!("YCLOUD_INVOCATION_MODE must be interactive or automation"),
+            };
+        }
+        if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+            return Ok(InvocationMode::Automation);
+        }
+        Ok(InvocationMode::Interactive)
     }
 }
 
@@ -356,5 +382,12 @@ mod tests {
             args.permissions,
             ["yc.integration.status.read", "yc.contact.record.read"]
         );
+    }
+
+    #[test]
+    fn explicit_automation_flag_selects_automation_mode() {
+        let cli = Cli::try_parse_from(["ycloud", "--automation", "whoami"]).unwrap();
+
+        assert_eq!(cli.invocation_mode().unwrap(), InvocationMode::Automation);
     }
 }
