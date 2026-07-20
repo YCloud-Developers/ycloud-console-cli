@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
-use chrono::SecondsFormat;
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use chrono::{SecondsFormat, Utc};
+use rand::Rng;
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, RETRY_AFTER};
 use reqwest::StatusCode;
 use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
+use std::fmt;
 use std::time::Duration;
 use url::Url;
 
@@ -13,14 +15,74 @@ pub struct DashboardClient {
     http: reqwest::Client,
     base_url: Url,
     timeout: Duration,
+    invocation_id: String,
+    invocation_mode: InvocationMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvocationMode {
+    Interactive,
+    Automation,
+}
+
+impl InvocationMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Interactive => "interactive",
+            Self::Automation => "automation",
+        }
+    }
+
+    fn retry_budget(self) -> RetryBudget {
+        match self {
+            Self::Interactive => RetryBudget::new(3, Duration::from_secs(5)),
+            Self::Automation => RetryBudget::new(4, Duration::from_secs(20)),
+        }
+    }
+
+    fn overall_timeout(self) -> Duration {
+        match self {
+            Self::Interactive => Duration::from_secs(30),
+            Self::Automation => Duration::from_secs(60),
+        }
+    }
+}
+
+impl fmt::Display for InvocationMode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RetryBudget {
+    max_attempts: usize,
+    max_wait: Duration,
+}
+
+impl RetryBudget {
+    fn new(max_attempts: usize, max_wait: Duration) -> Self {
+        Self {
+            max_attempts,
+            max_wait,
+        }
+    }
 }
 
 impl DashboardClient {
     pub fn new(base_url: String) -> Result<Self> {
-        Self::new_with_timeout(base_url, Duration::from_secs(30))
+        Self::new_with_mode(base_url, InvocationMode::Interactive)
     }
 
     pub fn new_with_timeout(base_url: String, timeout: Duration) -> Result<Self> {
+        Self::build(base_url, InvocationMode::Interactive, timeout)
+    }
+
+    pub fn new_with_mode(base_url: String, invocation_mode: InvocationMode) -> Result<Self> {
+        Self::build(base_url, invocation_mode, invocation_mode.overall_timeout())
+    }
+
+    fn build(base_url: String, invocation_mode: InvocationMode, timeout: Duration) -> Result<Self> {
         let mut parsed = Url::parse(&base_url).context("dashboard url must be absolute")?;
         if parsed.path() == "/" {
             parsed.set_path("");
@@ -31,6 +93,8 @@ impl DashboardClient {
                 .context("failed to build dashboard HTTP client")?,
             base_url: parsed,
             timeout,
+            invocation_id: random_identifier("inv"),
+            invocation_mode,
         })
     }
 
@@ -125,7 +189,7 @@ impl DashboardClient {
         access_token: &str,
         request: ContactsSearchRequest<'_>,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
-        self.post_json(
+        self.post_json_safe(
             "/api/cli/read/contacts/search",
             Some(access_token),
             &request,
@@ -228,7 +292,7 @@ impl DashboardClient {
         access_token: &str,
         request: &AnalyticsLogsRequest<'_>,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
-        self.post_json(
+        self.post_json_safe(
             "/api/cli/read/whatsapp/messages/search",
             Some(access_token),
             request,
@@ -241,7 +305,7 @@ impl DashboardClient {
         access_token: &str,
         request: &AnalyticsCallingLogsRequest<'_>,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
-        self.post_json(
+        self.post_json_safe(
             "/api/cli/read/calling/logs/search",
             Some(access_token),
             request,
@@ -261,25 +325,35 @@ impl DashboardClient {
         legacy_path: &str,
         token: Option<&str>,
     ) -> Result<ApiEnvelope<T>> {
-        let headers = headers(token)?;
         let request = async {
-            let mut response = self
-                .http
-                .get(self.join(primary_path)?)
-                .headers(headers.clone())
-                .send()
-                .await
-                .map_err(map_request_error)?;
-            if should_fallback(response.status()) {
-                response = self
+            let budget = self.invocation_mode.retry_budget();
+            let mut attempts = 0usize;
+            let mut waited = Duration::ZERO;
+            let mut path = primary_path;
+            loop {
+                attempts += 1;
+                let response = self
                     .http
-                    .get(self.join(legacy_path)?)
-                    .headers(headers)
+                    .get(self.join(path)?)
+                    .headers(self.attempt_headers(token)?)
                     .send()
                     .await
                     .map_err(map_request_error)?;
+                if path == primary_path && should_fallback(response.status()) {
+                    path = legacy_path;
+                    continue;
+                }
+                match decode_response(response).await? {
+                    ResponseOutcome::Success(envelope) => return Ok(envelope),
+                    ResponseOutcome::Failure(failure) => {
+                        let Some(delay) = retry_delay(&failure, attempts, waited, budget) else {
+                            return Err(failure.into_error());
+                        };
+                        tokio::time::sleep(delay).await;
+                        waited += delay;
+                    }
+                }
             }
-            parse_response(response).await
         };
         tokio::time::timeout(self.timeout, request)
             .await
@@ -292,17 +366,53 @@ impl DashboardClient {
         token: Option<&str>,
         body: &B,
     ) -> Result<ApiEnvelope<T>> {
-        let headers = headers(token)?;
         let request = async {
             let response = self
                 .http
                 .post(self.join(path)?)
-                .headers(headers)
+                .headers(self.attempt_headers(token)?)
                 .json(body)
                 .send()
                 .await
                 .map_err(map_request_error)?;
             parse_response(response).await
+        };
+        tokio::time::timeout(self.timeout, request)
+            .await
+            .map_err(|_| anyhow::anyhow!("dashboard API request timed out"))?
+    }
+
+    async fn post_json_safe<T: DeserializeOwned, B: Serialize + ?Sized>(
+        &self,
+        path: &str,
+        token: Option<&str>,
+        body: &B,
+    ) -> Result<ApiEnvelope<T>> {
+        let request = async {
+            let budget = self.invocation_mode.retry_budget();
+            let mut attempts = 0usize;
+            let mut waited = Duration::ZERO;
+            loop {
+                attempts += 1;
+                let response = self
+                    .http
+                    .post(self.join(path)?)
+                    .headers(self.attempt_headers(token)?)
+                    .json(body)
+                    .send()
+                    .await
+                    .map_err(map_request_error)?;
+                match decode_response(response).await? {
+                    ResponseOutcome::Success(envelope) => return Ok(envelope),
+                    ResponseOutcome::Failure(failure) => {
+                        let Some(delay) = retry_delay(&failure, attempts, waited, budget) else {
+                            return Err(failure.into_error());
+                        };
+                        tokio::time::sleep(delay).await;
+                        waited += delay;
+                    }
+                }
+            }
         };
         tokio::time::timeout(self.timeout, request)
             .await
@@ -321,31 +431,58 @@ impl DashboardClient {
         legacy_body: &L,
         token: Option<&str>,
     ) -> Result<ApiEnvelope<T>> {
-        let headers = headers(token)?;
         let request = async {
-            let mut response = self
-                .http
-                .post(self.join(primary_path)?)
-                .headers(headers.clone())
-                .json(primary_body)
-                .send()
-                .await
-                .map_err(map_request_error)?;
-            if should_fallback(response.status()) {
-                response = self
-                    .http
-                    .post(self.join(legacy_path)?)
-                    .headers(headers)
-                    .json(legacy_body)
-                    .send()
-                    .await
-                    .map_err(map_request_error)?;
+            let budget = self.invocation_mode.retry_budget();
+            let mut attempts = 0usize;
+            let mut waited = Duration::ZERO;
+            let mut legacy = false;
+            loop {
+                attempts += 1;
+                let response = if legacy {
+                    self.http
+                        .post(self.join(legacy_path)?)
+                        .headers(self.attempt_headers(token)?)
+                        .json(legacy_body)
+                        .send()
+                        .await
+                        .map_err(map_request_error)?
+                } else {
+                    self.http
+                        .post(self.join(primary_path)?)
+                        .headers(self.attempt_headers(token)?)
+                        .json(primary_body)
+                        .send()
+                        .await
+                        .map_err(map_request_error)?
+                };
+                if !legacy && should_fallback(response.status()) {
+                    legacy = true;
+                    continue;
+                }
+                match decode_response(response).await? {
+                    ResponseOutcome::Success(envelope) => return Ok(envelope),
+                    ResponseOutcome::Failure(failure) => {
+                        let Some(delay) = retry_delay(&failure, attempts, waited, budget) else {
+                            return Err(failure.into_error());
+                        };
+                        tokio::time::sleep(delay).await;
+                        waited += delay;
+                    }
+                }
             }
-            parse_response(response).await
         };
         tokio::time::timeout(self.timeout, request)
             .await
             .map_err(|_| anyhow::anyhow!("dashboard API request timed out"))?
+    }
+
+    fn attempt_headers(&self, token: Option<&str>) -> Result<HeaderMap> {
+        headers(
+            token,
+            &random_identifier("req"),
+            &self.invocation_id,
+            self.invocation_mode,
+        )
     }
 }
 
@@ -367,9 +504,26 @@ fn map_request_error(error: reqwest::Error) -> anyhow::Error {
     }
 }
 
-fn headers(token: Option<&str>) -> Result<HeaderMap> {
+fn headers(
+    token: Option<&str>,
+    request_id: &str,
+    invocation_id: &str,
+    invocation_mode: InvocationMode,
+) -> Result<HeaderMap> {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.insert(
+        "x-request-id",
+        HeaderValue::from_str(request_id).context("invalid generated request id")?,
+    );
+    headers.insert(
+        "x-ycloud-invocation-id",
+        HeaderValue::from_str(invocation_id).context("invalid generated invocation id")?,
+    );
+    headers.insert(
+        "x-ycloud-invocation-mode",
+        HeaderValue::from_static(invocation_mode.as_str()),
+    );
     if let Some(token) = token {
         headers.insert(
             AUTHORIZATION,
@@ -383,11 +537,67 @@ fn headers(token: Option<&str>) -> Result<HeaderMap> {
 async fn parse_response<T: DeserializeOwned>(
     response: reqwest::Response,
 ) -> Result<ApiEnvelope<T>> {
+    match decode_response(response).await? {
+        ResponseOutcome::Success(envelope) => Ok(envelope),
+        ResponseOutcome::Failure(failure) => Err(failure.into_error()),
+    }
+}
+
+enum ResponseOutcome<T> {
+    Success(ApiEnvelope<T>),
+    Failure(RateLimitFailure),
+}
+
+#[derive(Debug)]
+struct RateLimitFailure {
+    status: StatusCode,
+    code: String,
+    message: String,
+    request_id: Option<String>,
+    trace_id: Option<String>,
+    retry_after: Option<Duration>,
+}
+
+impl RateLimitFailure {
+    fn into_error(self) -> anyhow::Error {
+        let retry_after = self
+            .retry_after
+            .map(|value| format!(", retryAfterSeconds={}", value.as_secs()))
+            .unwrap_or_default();
+        anyhow::anyhow!(
+            "request failed with HTTP {}: {}: {} (requestId={}, traceId={}{}); retry budget exhausted or retry is not safe",
+            self.status,
+            self.code,
+            self.message,
+            self.request_id.unwrap_or_default(),
+            self.trace_id.unwrap_or_default(),
+            retry_after
+        )
+    }
+}
+
+async fn decode_response<T: DeserializeOwned>(
+    response: reqwest::Response,
+) -> Result<ResponseOutcome<T>> {
     let status = response.status();
+    let retry_after = parse_retry_after(response.headers().get(RETRY_AFTER));
     let text = response.text().await.map_err(map_request_error)?;
     if !status.is_success() {
         if let Ok(envelope) = serde_json::from_str::<ApiEnvelope<serde_json::Value>>(&text) {
             if let Some(error) = envelope.error {
+                if status == StatusCode::TOO_MANY_REQUESTS
+                    && error.code == "rate_limited"
+                    && error.retryable
+                {
+                    return Ok(ResponseOutcome::Failure(RateLimitFailure {
+                        status,
+                        code: error.code,
+                        message: error.message,
+                        request_id: envelope.request_id,
+                        trace_id: envelope.trace_id,
+                        retry_after,
+                    }));
+                }
                 anyhow::bail!(
                     "request failed with HTTP {status}: {}: {} (requestId={}, traceId={})",
                     error.code,
@@ -397,7 +607,7 @@ async fn parse_response<T: DeserializeOwned>(
                 );
             }
         }
-        anyhow::bail!("request failed with HTTP {status}: {text}");
+        anyhow::bail!("request failed with HTTP {status}");
     }
     let envelope: ApiEnvelope<T> =
         serde_json::from_str(&text).context("failed to parse dashboard response")?;
@@ -408,7 +618,42 @@ async fn parse_response<T: DeserializeOwned>(
             envelope.message.clone().unwrap_or_default()
         );
     }
-    Ok(envelope)
+    Ok(ResponseOutcome::Success(envelope))
+}
+
+fn retry_delay(
+    failure: &RateLimitFailure,
+    attempts: usize,
+    waited: Duration,
+    budget: RetryBudget,
+) -> Option<Duration> {
+    if attempts >= budget.max_attempts {
+        return None;
+    }
+    let delay = failure.retry_after.unwrap_or_else(|| {
+        let ceiling_ms = 250u64.saturating_mul(1u64 << attempts.saturating_sub(1).min(6));
+        Duration::from_millis(rand::thread_rng().gen_range(0..=ceiling_ms))
+    });
+    if waited.saturating_add(delay) > budget.max_wait {
+        return None;
+    }
+    Some(delay)
+}
+
+fn parse_retry_after(value: Option<&HeaderValue>) -> Option<Duration> {
+    let value = value?.to_str().ok()?.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+    let deadline = chrono::DateTime::parse_from_rfc2822(value)
+        .ok()?
+        .with_timezone(&Utc);
+    let millis = (deadline - Utc::now()).num_milliseconds().max(0) as u64;
+    Some(Duration::from_millis(millis))
+}
+
+fn random_identifier(prefix: &str) -> String {
+    format!("{prefix}-{:032x}", rand::random::<u128>())
 }
 
 #[derive(Debug, Deserialize)]
