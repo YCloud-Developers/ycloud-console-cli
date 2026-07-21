@@ -8,6 +8,8 @@
 - `ycloud whoami` reads the current Console CLI identity.
 - `ycloud tenants list` lists tenants available to the current Console CLI token.
 - `ycloud integrations status` and `ycloud contacts metadata` use the stable `/api/cli/v1/**` contract.
+- `ycloud inbox conversations export` creates a permission-scoped asynchronous export and includes a separate contacts artifact by default.
+- `ycloud contacts export` provides the same artifact workflow for contact filters without first exporting conversations.
 - `ycloud analytics outline` and `ycloud analytics overview` use the stable WhatsApp analytics contract. The CLI sends RFC 3339 time values and an IANA timezone such as `Asia/Shanghai`.
 - Stable commands fall back to the matching `/api/cli/read/**` compatibility adapter only when the server returns HTTP 404 or 405 during a rolling upgrade. Authentication, authorization, validation, and server errors are never retried through the legacy adapter.
 - Every HTTP attempt sends a new `X-Request-Id`; attempts from one command share a non-secret invocation ID and mode. Typed `rate_limited` responses never trigger legacy fallback.
@@ -61,6 +63,11 @@ ycloud whoami
 ycloud tenants list
 ycloud integrations status
 ycloud contacts metadata
+ycloud inbox conversations search --inbox-id inbox-1 --limit 100
+ycloud inbox conversations export --inbox-id inbox-1 --output-dir ./export
+ycloud contacts export --condition vip --format csv --output-dir ./export
+ycloud exports query TASK_ID
+ycloud exports download TASK_ID --artifact conversations,contacts,manifest --output-dir ./export
 ycloud analytics outline
 ycloud analytics overview
 ycloud analytics logs --page-no 1 --page-size 20
@@ -68,6 +75,12 @@ ycloud analytics calling-logs --page-no 1 --page-size 20
 ycloud refresh
 ycloud logout
 ```
+
+Export creation waits by default, then downloads the independent ready artifacts. Use
+`--no-wait` to return the task ID immediately. `--archive` requests an additional ZIP when the
+server-side feature is enabled; ZIP never replaces the conversation, contact, or manifest files.
+Downloads are streamed through a `.part` file, verified against the server-provided size and
+SHA-256 checksum, and never overwrite an existing file.
 
 Analytics commands default to the last 7 days. CLI flags continue to accept millisecond timestamps; stable WhatsApp analytics requests convert them to RFC 3339 before sending. `analytics overview` defaults to the IANA timezone `Asia/Shanghai`:
 
@@ -103,7 +116,22 @@ ycloud login --profile basic \
   --permission yc.contact.record.read
 ```
 
-Profiles are expanded by the backend. The token and local config store only the resulting atomic requested permissions. PLANNED permissions, including all currently catalogued writes, cannot be requested. HTTP requests have a 30-second total timeout.
+Profiles are expanded by the backend. The token and local config store only the resulting atomic
+requested permissions. Inbox and Contact export permissions are active but require explicit
+enablement and are not included in any default profile:
+
+```bash
+ycloud login --profile readonly \
+  --permission yc.inbox.conversation.export \
+  --permission yc.contact.record.export
+```
+
+Export creation and retry are never automatically retried. Task polling and signed-artifact URL
+requests are safe reads with bounded retries. Ordinary API requests have a 30-second total timeout;
+artifact downloads are streamed independently so large files are not buffered in memory.
+Create and retry commands generate an idempotency key by default. If a response is lost after
+submission, repeat the command with the same `--idempotency-key` to recover the original task
+without creating another export.
 
 ## Rate-limit retries
 

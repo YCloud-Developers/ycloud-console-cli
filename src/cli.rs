@@ -70,6 +70,16 @@ pub enum Command {
         #[command(subcommand)]
         command: ContactsCommand,
     },
+    #[command(about = "Search and export Inbox conversations")]
+    Inbox {
+        #[command(subcommand)]
+        command: InboxCommand,
+    },
+    #[command(about = "Query, retry, or download asynchronous exports")]
+    Exports {
+        #[command(subcommand)]
+        command: ExportsCommand,
+    },
     #[command(about = "Query Dashboard integration status APIs")]
     Integrations {
         #[command(subcommand)]
@@ -165,6 +175,215 @@ pub enum ContactsCommand {
     List(ContactsListArgs),
     #[command(about = "List contact sources, tags, segments, and segment filters")]
     Metadata,
+    #[command(about = "Export contacts asynchronously")]
+    Export(ContactExportArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum InboxCommand {
+    Conversations {
+        #[command(subcommand)]
+        command: InboxConversationsCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum InboxConversationsCommand {
+    #[command(about = "Search permission-scoped Inbox conversations")]
+    Search(ConversationSearchArgs),
+    #[command(about = "Export conversations and, by default, their contacts")]
+    Export(ConversationExportArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ExportsCommand {
+    #[command(about = "Query an export task")]
+    Query(ExportTaskArgs),
+    #[command(about = "Retry a failed or partially successful export as a new task")]
+    Retry(ExportRetryArgs),
+    #[command(about = "Download selected ready artifacts")]
+    Download(ExportDownloadArgs),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ExportFormat {
+    Auto,
+    Csv,
+    Xlsx,
+}
+
+impl ExportFormat {
+    pub fn as_api_value(self) -> &'static str {
+        match self {
+            Self::Auto => "AUTO",
+            Self::Csv => "CSV",
+            Self::Xlsx => "XLSX",
+        }
+    }
+}
+
+impl std::fmt::Display for ExportFormat {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_api_value().to_ascii_lowercase().as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ExportArtifactType {
+    Conversations,
+    Contacts,
+    Manifest,
+    Archive,
+}
+
+impl ExportArtifactType {
+    pub fn as_api_value(self) -> &'static str {
+        match self {
+            Self::Conversations => "CONVERSATIONS",
+            Self::Contacts => "CONTACTS",
+            Self::Manifest => "MANIFEST",
+            Self::Archive => "ARCHIVE",
+        }
+    }
+}
+
+#[derive(Debug, Args, Clone, Default)]
+pub struct ConversationFilterArgs {
+    #[arg(long = "inbox-id", value_delimiter = ',')]
+    pub inbox_ids: Vec<String>,
+    #[arg(long = "assignee-id", value_delimiter = ',')]
+    pub assignee_ids: Vec<String>,
+    #[arg(long = "conversation-tag-id", value_delimiter = ',')]
+    pub conversation_tag_ids: Vec<String>,
+    #[arg(long = "contact-tag-id", value_delimiter = ',')]
+    pub contact_tag_ids: Vec<String>,
+    #[arg(long)]
+    pub status: Option<i32>,
+    #[arg(long)]
+    pub condition: Option<String>,
+    #[arg(long)]
+    pub start_time: Option<i64>,
+    #[arg(long)]
+    pub end_time: Option<i64>,
+    #[arg(long)]
+    pub close_start_time: Option<i64>,
+    #[arg(long)]
+    pub close_end_time: Option<i64>,
+    #[arg(long)]
+    pub csat: Option<i32>,
+    #[arg(long)]
+    pub customer: Option<bool>,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct ConversationSearchArgs {
+    #[command(flatten)]
+    pub filter: ConversationFilterArgs,
+    #[arg(long)]
+    pub cursor: Option<String>,
+    #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..=1000))]
+    pub limit: u32,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct ConversationExportArgs {
+    #[command(flatten)]
+    pub filter: ConversationFilterArgs,
+    #[arg(long, value_delimiter = ',')]
+    pub columns: Vec<String>,
+    #[arg(long, value_enum, default_value_t = ExportFormat::Auto)]
+    pub format: ExportFormat,
+    #[arg(long, help = "Do not generate the related contacts artifact")]
+    pub no_contacts: bool,
+    #[arg(
+        long,
+        help = "Also generate archive.zip; independent artifacts remain available"
+    )]
+    pub archive: bool,
+    #[arg(long, default_value = "GMT")]
+    pub timezone: String,
+    #[arg(long)]
+    pub file_name: Option<String>,
+    #[arg(
+        long,
+        help = "Reuse this key to recover safely from an uncertain create response"
+    )]
+    pub idempotency_key: Option<String>,
+    #[command(flatten)]
+    pub wait: ExportWaitArgs,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct ContactExportArgs {
+    #[arg(long)]
+    pub condition: Option<String>,
+    #[arg(long)]
+    pub segment_id: Option<String>,
+    #[arg(long)]
+    pub blocked: Option<bool>,
+    #[arg(long, value_delimiter = ',')]
+    pub columns: Vec<String>,
+    #[arg(long, value_enum, default_value_t = ExportFormat::Auto)]
+    pub format: ExportFormat,
+    #[arg(long)]
+    pub archive: bool,
+    #[arg(long, default_value = "GMT")]
+    pub timezone: String,
+    #[arg(long)]
+    pub file_name: Option<String>,
+    #[arg(
+        long,
+        help = "Reuse this key to recover safely from an uncertain create response"
+    )]
+    pub idempotency_key: Option<String>,
+    #[command(flatten)]
+    pub wait: ExportWaitArgs,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct ExportWaitArgs {
+    #[arg(long, help = "Return immediately after task creation")]
+    pub no_wait: bool,
+    #[arg(long, default_value = ".")]
+    pub output_dir: PathBuf,
+    #[arg(long = "artifact", value_enum, value_delimiter = ',')]
+    pub artifacts: Vec<ExportArtifactType>,
+    #[arg(long, default_value_t = 3600)]
+    pub timeout_seconds: u64,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct ExportTaskArgs {
+    pub task_id: String,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct ExportRetryArgs {
+    pub task_id: String,
+    #[arg(
+        long,
+        help = "Reuse this key to recover safely from an uncertain retry response"
+    )]
+    pub idempotency_key: Option<String>,
+    #[command(flatten)]
+    pub wait: ExportWaitArgs,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct ExportDownloadArgs {
+    pub task_id: String,
+    #[arg(long = "artifact", value_enum, value_delimiter = ',')]
+    pub artifacts: Vec<ExportArtifactType>,
+    #[arg(long, default_value = ".")]
+    pub output_dir: PathBuf,
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -389,5 +608,66 @@ mod tests {
         let cli = Cli::try_parse_from(["ycloud", "--automation", "whoami"]).unwrap();
 
         assert_eq!(cli.invocation_mode().unwrap(), InvocationMode::Automation);
+    }
+
+    #[test]
+    fn parses_combined_conversation_export_defaults() {
+        let cli = Cli::try_parse_from([
+            "ycloud",
+            "inbox",
+            "conversations",
+            "export",
+            "--inbox-id",
+            "inbox-1,inbox-2",
+            "--no-wait",
+            "--idempotency-key",
+            "conversation-export-1",
+        ])
+        .unwrap();
+        let Command::Inbox {
+            command:
+                InboxCommand::Conversations {
+                    command: InboxConversationsCommand::Export(args),
+                },
+        } = cli.command
+        else {
+            panic!("expected conversation export");
+        };
+        assert_eq!(args.filter.inbox_ids, ["inbox-1", "inbox-2"]);
+        assert!(!args.no_contacts);
+        assert!(args.wait.no_wait);
+        assert_eq!(args.format, ExportFormat::Auto);
+        assert_eq!(
+            args.idempotency_key.as_deref(),
+            Some("conversation-export-1")
+        );
+    }
+
+    #[test]
+    fn parses_independent_contact_export() {
+        let cli = Cli::try_parse_from([
+            "ycloud",
+            "contacts",
+            "export",
+            "--condition",
+            "vip",
+            "--format",
+            "csv",
+            "--artifact",
+            "contacts,manifest",
+            "--idempotency-key",
+            "contact-export-1",
+        ])
+        .unwrap();
+        let Command::Contacts {
+            command: ContactsCommand::Export(args),
+        } = cli.command
+        else {
+            panic!("expected contact export");
+        };
+        assert_eq!(args.condition.as_deref(), Some("vip"));
+        assert_eq!(args.format, ExportFormat::Csv);
+        assert_eq!(args.wait.artifacts.len(), 2);
+        assert_eq!(args.idempotency_key.as_deref(), Some("contact-export-1"));
     }
 }

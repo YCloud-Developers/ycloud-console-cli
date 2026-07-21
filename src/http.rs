@@ -4,8 +4,10 @@ use rand::Rng;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, RETRY_AFTER};
 use reqwest::StatusCode;
 use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
-use std::fmt;
+use sha2::{Digest, Sha256};
 use std::time::Duration;
+use std::{fmt, path::Path};
+use tokio::io::AsyncWriteExt;
 use url::Url;
 
 use crate::pkce::PkcePair;
@@ -313,6 +315,121 @@ impl DashboardClient {
         .await
     }
 
+    pub async fn conversations_search(
+        &self,
+        access_token: &str,
+        request: &serde_json::Value,
+    ) -> Result<ApiEnvelope<serde_json::Value>> {
+        self.post_json_safe(
+            "/api/cli/v1/inbox/conversations/search",
+            Some(access_token),
+            request,
+        )
+        .await
+    }
+
+    pub async fn create_conversation_export(
+        &self,
+        access_token: &str,
+        idempotency_key: &str,
+        request: &serde_json::Value,
+    ) -> Result<ApiEnvelope<ExportTask>> {
+        self.post_json_idempotent(
+            "/api/cli/v1/inbox/conversation-exports",
+            access_token,
+            idempotency_key,
+            request,
+        )
+        .await
+    }
+
+    pub async fn create_contact_export(
+        &self,
+        access_token: &str,
+        idempotency_key: &str,
+        request: &serde_json::Value,
+    ) -> Result<ApiEnvelope<ExportTask>> {
+        self.post_json_idempotent(
+            "/api/cli/v1/contact-exports",
+            access_token,
+            idempotency_key,
+            request,
+        )
+        .await
+    }
+
+    pub async fn query_export(
+        &self,
+        access_token: &str,
+        task_id: &str,
+    ) -> Result<ApiEnvelope<ExportTask>> {
+        self.post_json_safe(
+            "/api/cli/v1/exports/query",
+            Some(access_token),
+            &serde_json::json!({"taskId": task_id}),
+        )
+        .await
+    }
+
+    pub async fn retry_export(
+        &self,
+        access_token: &str,
+        task_id: &str,
+        idempotency_key: &str,
+    ) -> Result<ApiEnvelope<ExportTask>> {
+        self.post_json_idempotent(
+            "/api/cli/v1/exports/retry",
+            access_token,
+            idempotency_key,
+            &serde_json::json!({"taskId": task_id}),
+        )
+        .await
+    }
+
+    pub async fn export_artifact_url(
+        &self,
+        access_token: &str,
+        task_id: &str,
+        artifact_type: &str,
+    ) -> Result<ApiEnvelope<ArtifactUrl>> {
+        self.post_json_safe(
+            "/api/cli/v1/exports/artifact-url",
+            Some(access_token),
+            &serde_json::json!({"taskId": task_id, "artifactType": artifact_type}),
+        )
+        .await
+    }
+
+    pub async fn download_to_file(&self, signed_url: &str, path: &Path) -> Result<DownloadReceipt> {
+        let response = self
+            .http
+            .get(Url::parse(signed_url).context("artifact URL must be absolute")?)
+            .send()
+            .await
+            .map_err(map_request_error)?;
+        if !response.status().is_success() {
+            anyhow::bail!("artifact download failed with HTTP {}", response.status());
+        }
+        let mut response = response;
+        let mut file = tokio::fs::File::create(path)
+            .await
+            .with_context(|| format!("failed to create {}", path.display()))?;
+        let mut digest = Sha256::new();
+        let mut size = 0u64;
+        while let Some(chunk) = response.chunk().await.map_err(map_request_error)? {
+            file.write_all(&chunk)
+                .await
+                .with_context(|| format!("failed to write {}", path.display()))?;
+            digest.update(&chunk);
+            size += chunk.len() as u64;
+        }
+        file.flush().await?;
+        Ok(DownloadReceipt {
+            size,
+            checksum_sha256: format!("{:x}", digest.finalize()),
+        })
+    }
+
     fn join(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path.trim_start_matches('/'))
@@ -413,6 +530,34 @@ impl DashboardClient {
                     }
                 }
             }
+        };
+        tokio::time::timeout(self.timeout, request)
+            .await
+            .map_err(|_| anyhow::anyhow!("dashboard API request timed out"))?
+    }
+
+    async fn post_json_idempotent<T: DeserializeOwned, B: Serialize + ?Sized>(
+        &self,
+        path: &str,
+        access_token: &str,
+        idempotency_key: &str,
+        body: &B,
+    ) -> Result<ApiEnvelope<T>> {
+        let request = async {
+            let mut headers = self.attempt_headers(Some(access_token))?;
+            headers.insert(
+                "idempotency-key",
+                HeaderValue::from_str(idempotency_key).context("invalid idempotency key")?,
+            );
+            let response = self
+                .http
+                .post(self.join(path)?)
+                .headers(headers)
+                .json(body)
+                .send()
+                .await
+                .map_err(map_request_error)?;
+            parse_response(response).await
         };
         tokio::time::timeout(self.timeout, request)
             .await
@@ -698,6 +843,74 @@ pub struct ApiPagination {
 pub struct ApiWarning {
     pub code: String,
     pub message: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportTask {
+    pub task_id: String,
+    pub task_type: String,
+    pub status: String,
+    #[serde(default)]
+    pub progress: u32,
+    #[serde(default)]
+    pub record_count: Option<u64>,
+    #[serde(default)]
+    pub previous_task_id: Option<String>,
+    #[serde(default)]
+    pub artifacts: Vec<ExportArtifact>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    #[serde(default)]
+    pub error_code: Option<String>,
+    #[serde(default)]
+    pub error_message: Option<String>,
+}
+
+impl ExportTask {
+    pub fn terminal(&self) -> bool {
+        matches!(
+            self.status.to_ascii_uppercase().as_str(),
+            "FINISHED" | "FAILED" | "PARTIAL_SUCCESS"
+        )
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportArtifact {
+    pub r#type: String,
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub file_name: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub record_count: Option<u64>,
+    #[serde(default)]
+    pub size: Option<u64>,
+    #[serde(default)]
+    pub checksum_sha256: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactUrl {
+    pub task_id: String,
+    pub artifact_type: String,
+    pub file_name: String,
+    pub url: String,
+    pub expires_at: i64,
+    #[serde(default)]
+    pub size: Option<u64>,
+    #[serde(default)]
+    pub checksum_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadReceipt {
+    pub size: u64,
+    pub checksum_sha256: String,
 }
 
 impl<T> ApiEnvelope<T> {
