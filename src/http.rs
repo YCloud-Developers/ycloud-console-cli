@@ -169,21 +169,13 @@ impl DashboardClient {
     }
 
     pub async fn whoami(&self, access_token: &str) -> Result<ApiEnvelope<WhoamiData>> {
-        self.get_json_with_fallback(
-            "/api/cli/v1/whoami",
-            "/api/cli/auth/whoami",
-            Some(access_token),
-        )
-        .await
+        self.get_json_safe("/api/cli/v1/whoami", Some(access_token))
+            .await
     }
 
     pub async fn tenants(&self, access_token: &str) -> Result<ApiEnvelope<TenantsData>> {
-        self.get_json_with_fallback(
-            "/api/cli/v1/tenants",
-            "/api/cli/auth/tenants/list",
-            Some(access_token),
-        )
-        .await
+        self.get_json_safe("/api/cli/v1/tenants", Some(access_token))
+            .await
     }
 
     pub async fn contacts_search(
@@ -191,36 +183,24 @@ impl DashboardClient {
         access_token: &str,
         request: ContactsSearchRequest<'_>,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
-        self.post_json_safe(
-            "/api/cli/read/contacts/search",
-            Some(access_token),
-            &request,
-        )
-        .await
+        self.post_json_safe("/api/cli/v1/contacts/search", Some(access_token), &request)
+            .await
     }
 
     pub async fn contacts_metadata(
         &self,
         access_token: &str,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
-        self.get_json_with_fallback(
-            "/api/cli/v1/contacts/metadata",
-            "/api/cli/read/contacts/metadata",
-            Some(access_token),
-        )
-        .await
+        self.get_json_safe("/api/cli/v1/contacts/metadata", Some(access_token))
+            .await
     }
 
     pub async fn integrations_status(
         &self,
         access_token: &str,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
-        self.get_json_with_fallback(
-            "/api/cli/v1/integrations/status",
-            "/api/cli/read/integrations/status",
-            Some(access_token),
-        )
-        .await
+        self.get_json_safe("/api/cli/v1/integrations/status", Some(access_token))
+            .await
     }
 
     pub async fn whatsapp_analytics_outline(
@@ -233,12 +213,7 @@ impl DashboardClient {
             millis_to_rfc3339(request.start_time)?,
             millis_to_rfc3339(request.end_time)?
         );
-        let legacy = format!(
-            "/api/cli/read/whatsapp/analytics/outline?startTime={}&endTime={}",
-            request.start_time, request.end_time
-        );
-        self.get_json_with_fallback(&primary, &legacy, Some(access_token))
-            .await
+        self.get_json_safe(&primary, Some(access_token)).await
     }
 
     pub async fn whatsapp_delivery_analytics(
@@ -247,12 +222,10 @@ impl DashboardClient {
         request: &AnalyticsOverviewRequest<'_>,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
         let stable = AnalyticsV1Request::try_from(*request)?;
-        self.post_json_with_fallback(
+        self.post_json_safe(
             "/api/cli/v1/whatsapp/analytics/delivery",
-            &stable,
-            "/api/cli/read/whatsapp/analytics/delivery",
-            request,
             Some(access_token),
+            &stable,
         )
         .await
     }
@@ -263,12 +236,10 @@ impl DashboardClient {
         request: &AnalyticsOverviewRequest<'_>,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
         let stable = AnalyticsV1Request::try_from(*request)?;
-        self.post_json_with_fallback(
+        self.post_json_safe(
             "/api/cli/v1/whatsapp/analytics/message-detail",
-            &stable,
-            "/api/cli/read/whatsapp/analytics/message-detail",
-            request,
             Some(access_token),
+            &stable,
         )
         .await
     }
@@ -279,12 +250,10 @@ impl DashboardClient {
         request: &AnalyticsOverviewRequest<'_>,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
         let stable = AnalyticsV1Request::try_from(*request)?;
-        self.post_json_with_fallback(
+        self.post_json_safe(
             "/api/cli/v1/whatsapp/analytics/failure-reasons",
-            &stable,
-            "/api/cli/read/whatsapp/analytics/failure-reasons",
-            request,
             Some(access_token),
+            &stable,
         )
         .await
     }
@@ -295,7 +264,7 @@ impl DashboardClient {
         request: &AnalyticsLogsRequest<'_>,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
         self.post_json_safe(
-            "/api/cli/read/whatsapp/messages/search",
+            "/api/cli/v1/whatsapp/messages/search",
             Some(access_token),
             request,
         )
@@ -308,7 +277,7 @@ impl DashboardClient {
         request: &AnalyticsCallingLogsRequest<'_>,
     ) -> Result<ApiEnvelope<serde_json::Value>> {
         self.post_json_safe(
-            "/api/cli/read/calling/logs/search",
+            "/api/cli/v1/calling/logs/search",
             Some(access_token),
             request,
         )
@@ -436,17 +405,15 @@ impl DashboardClient {
             .with_context(|| format!("failed to build dashboard api url for {path}"))
     }
 
-    async fn get_json_with_fallback<T: DeserializeOwned>(
+    async fn get_json_safe<T: DeserializeOwned>(
         &self,
-        primary_path: &str,
-        legacy_path: &str,
+        path: &str,
         token: Option<&str>,
     ) -> Result<ApiEnvelope<T>> {
         let request = async {
             let budget = self.invocation_mode.retry_budget();
             let mut attempts = 0usize;
             let mut waited = Duration::ZERO;
-            let mut path = primary_path;
             loop {
                 attempts += 1;
                 let response = self
@@ -456,10 +423,6 @@ impl DashboardClient {
                     .send()
                     .await
                     .map_err(map_request_error)?;
-                if path == primary_path && should_fallback(response.status()) {
-                    path = legacy_path;
-                    continue;
-                }
                 match decode_response(response).await? {
                     ResponseOutcome::Success(envelope) => return Ok(envelope),
                     ResponseOutcome::Failure(failure) => {
@@ -564,63 +527,6 @@ impl DashboardClient {
             .map_err(|_| anyhow::anyhow!("dashboard API request timed out"))?
     }
 
-    async fn post_json_with_fallback<
-        T: DeserializeOwned,
-        P: Serialize + ?Sized,
-        L: Serialize + ?Sized,
-    >(
-        &self,
-        primary_path: &str,
-        primary_body: &P,
-        legacy_path: &str,
-        legacy_body: &L,
-        token: Option<&str>,
-    ) -> Result<ApiEnvelope<T>> {
-        let request = async {
-            let budget = self.invocation_mode.retry_budget();
-            let mut attempts = 0usize;
-            let mut waited = Duration::ZERO;
-            let mut legacy = false;
-            loop {
-                attempts += 1;
-                let response = if legacy {
-                    self.http
-                        .post(self.join(legacy_path)?)
-                        .headers(self.attempt_headers(token)?)
-                        .json(legacy_body)
-                        .send()
-                        .await
-                        .map_err(map_request_error)?
-                } else {
-                    self.http
-                        .post(self.join(primary_path)?)
-                        .headers(self.attempt_headers(token)?)
-                        .json(primary_body)
-                        .send()
-                        .await
-                        .map_err(map_request_error)?
-                };
-                if !legacy && should_fallback(response.status()) {
-                    legacy = true;
-                    continue;
-                }
-                match decode_response(response).await? {
-                    ResponseOutcome::Success(envelope) => return Ok(envelope),
-                    ResponseOutcome::Failure(failure) => {
-                        let Some(delay) = retry_delay(&failure, attempts, waited, budget) else {
-                            return Err(failure.into_error());
-                        };
-                        tokio::time::sleep(delay).await;
-                        waited += delay;
-                    }
-                }
-            }
-        };
-        tokio::time::timeout(self.timeout, request)
-            .await
-            .map_err(|_| anyhow::anyhow!("dashboard API request timed out"))?
-    }
-
     fn attempt_headers(&self, token: Option<&str>) -> Result<HeaderMap> {
         headers(
             token,
@@ -629,10 +535,6 @@ impl DashboardClient {
             self.invocation_mode,
         )
     }
-}
-
-fn should_fallback(status: StatusCode) -> bool {
-    status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED
 }
 
 fn millis_to_rfc3339(value: i64) -> Result<String> {
@@ -690,36 +592,76 @@ async fn parse_response<T: DeserializeOwned>(
 
 enum ResponseOutcome<T> {
     Success(ApiEnvelope<T>),
-    Failure(RateLimitFailure),
+    Failure(DashboardApiError),
 }
 
-#[derive(Debug)]
-struct RateLimitFailure {
+#[derive(Debug, Clone)]
+pub struct DashboardApiError {
     status: StatusCode,
     code: String,
     message: String,
+    retryable: bool,
+    details: Option<serde_json::Value>,
     request_id: Option<String>,
     trace_id: Option<String>,
     retry_after: Option<Duration>,
 }
 
-impl RateLimitFailure {
+impl DashboardApiError {
+    #[cfg(test)]
+    pub(crate) fn for_test(status: StatusCode, error: ApiError) -> Self {
+        Self {
+            status,
+            code: error.code,
+            message: error.message,
+            retryable: error.retryable,
+            details: error.details,
+            request_id: None,
+            trace_id: None,
+            retry_after: None,
+        }
+    }
+
+    pub fn status(&self) -> StatusCode {
+        self.status
+    }
+
+    pub fn code(&self) -> &str {
+        &self.code
+    }
+
+    pub fn details(&self) -> Option<&serde_json::Value> {
+        self.details.as_ref()
+    }
+
+    pub fn request_id(&self) -> Option<&str> {
+        self.request_id.as_deref()
+    }
+
+    pub fn trace_id(&self) -> Option<&str> {
+        self.trace_id.as_deref()
+    }
+
     fn into_error(self) -> anyhow::Error {
-        let retry_after = self
-            .retry_after
-            .map(|value| format!(", retryAfterSeconds={}", value.as_secs()))
-            .unwrap_or_default();
-        anyhow::anyhow!(
-            "request failed with HTTP {}: {}: {} (requestId={}, traceId={}{}); retry budget exhausted or retry is not safe",
+        self.into()
+    }
+}
+
+impl fmt::Display for DashboardApiError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "request failed with HTTP {}: {}: {} (requestId={}, traceId={})",
             self.status,
             self.code,
             self.message,
-            self.request_id.unwrap_or_default(),
-            self.trace_id.unwrap_or_default(),
-            retry_after
+            self.request_id.as_deref().unwrap_or_default(),
+            self.trace_id.as_deref().unwrap_or_default()
         )
     }
 }
+
+impl std::error::Error for DashboardApiError {}
 
 async fn decode_response<T: DeserializeOwned>(
     response: reqwest::Response,
@@ -730,48 +672,79 @@ async fn decode_response<T: DeserializeOwned>(
     if !status.is_success() {
         if let Ok(envelope) = serde_json::from_str::<ApiEnvelope<serde_json::Value>>(&text) {
             if let Some(error) = envelope.error {
-                if status == StatusCode::TOO_MANY_REQUESTS
-                    && error.code == "rate_limited"
-                    && error.retryable
-                {
-                    return Ok(ResponseOutcome::Failure(RateLimitFailure {
-                        status,
-                        code: error.code,
-                        message: error.message,
-                        request_id: envelope.request_id,
-                        trace_id: envelope.trace_id,
-                        retry_after,
-                    }));
-                }
-                anyhow::bail!(
-                    "request failed with HTTP {status}: {}: {} (requestId={}, traceId={})",
-                    error.code,
-                    error.message,
-                    envelope.request_id.unwrap_or_default(),
-                    envelope.trace_id.unwrap_or_default()
-                );
+                return Ok(ResponseOutcome::Failure(DashboardApiError {
+                    status,
+                    code: error.code,
+                    message: error.message,
+                    retryable: error.retryable,
+                    details: error.details,
+                    request_id: envelope.request_id,
+                    trace_id: envelope.trace_id,
+                    retry_after,
+                }));
             }
         }
-        anyhow::bail!("request failed with HTTP {status}");
+        return Ok(ResponseOutcome::Failure(DashboardApiError {
+            status,
+            code: "http_error".to_string(),
+            message: status
+                .canonical_reason()
+                .unwrap_or("request failed")
+                .to_string(),
+            retryable: false,
+            details: None,
+            request_id: None,
+            trace_id: None,
+            retry_after,
+        }));
     }
     let envelope: ApiEnvelope<T> =
         serde_json::from_str(&text).context("failed to parse dashboard response")?;
     if envelope.code != 0 {
-        anyhow::bail!(
-            "dashboard api rejected request: code={}, message={}",
-            envelope.code,
-            envelope.message.clone().unwrap_or_default()
+        let (code, message, retryable, details) = envelope.error.as_ref().map_or_else(
+            || {
+                (
+                    envelope.code.to_string(),
+                    envelope.message.clone().unwrap_or_default(),
+                    false,
+                    None,
+                )
+            },
+            |error| {
+                (
+                    error.code.clone(),
+                    error.message.clone(),
+                    error.retryable,
+                    error.details.clone(),
+                )
+            },
         );
+        return Ok(ResponseOutcome::Failure(DashboardApiError {
+            status,
+            code,
+            message,
+            retryable,
+            details,
+            request_id: envelope.request_id,
+            trace_id: envelope.trace_id,
+            retry_after,
+        }));
     }
     Ok(ResponseOutcome::Success(envelope))
 }
 
 fn retry_delay(
-    failure: &RateLimitFailure,
+    failure: &DashboardApiError,
     attempts: usize,
     waited: Duration,
     budget: RetryBudget,
 ) -> Option<Duration> {
+    if failure.status != StatusCode::TOO_MANY_REQUESTS
+        || failure.code != "rate_limited"
+        || !failure.retryable
+    {
+        return None;
+    }
     if attempts >= budget.max_attempts {
         return None;
     }

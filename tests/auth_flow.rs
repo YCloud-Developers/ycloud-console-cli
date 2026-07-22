@@ -36,7 +36,7 @@ async fn token_exchange_uses_backend_contract_and_saves_config_shape() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/api/cli/auth/whoami"))
+        .and(path("/api/cli/v1/whoami"))
         .and(header("authorization", "Bearer YCLI.access"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "code": 0,
@@ -138,10 +138,10 @@ async fn refresh_rotates_stored_tokens() {
 }
 
 #[tokio::test]
-async fn contacts_list_calls_cli_read_adapter() {
+async fn contacts_list_calls_stable_v1_endpoint() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path("/api/cli/read/contacts/search"))
+        .and(path("/api/cli/v1/contacts/search"))
         .and(header("authorization", "Bearer YCLI.access"))
         .and(body_json(serde_json::json!({
             "pageNo": 1,
@@ -197,10 +197,10 @@ async fn contacts_list_calls_cli_read_adapter() {
 }
 
 #[tokio::test]
-async fn contacts_metadata_calls_cli_readonly_endpoint() {
+async fn contacts_metadata_calls_stable_v1_endpoint() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/cli/read/contacts/metadata"))
+        .and(path("/api/cli/v1/contacts/metadata"))
         .and(header("authorization", "Bearer YCLI.access"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "code": 0,
@@ -230,10 +230,10 @@ async fn contacts_metadata_calls_cli_readonly_endpoint() {
 }
 
 #[tokio::test]
-async fn integrations_status_calls_cli_readonly_endpoint() {
+async fn integrations_status_calls_stable_v1_endpoint() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/cli/read/integrations/status"))
+        .and(path("/api/cli/v1/integrations/status"))
         .and(header("authorization", "Bearer YCLI.access"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "code": 0,
@@ -259,20 +259,20 @@ async fn integrations_status_calls_cli_readonly_endpoint() {
 }
 
 #[tokio::test]
-async fn analytics_overview_calls_cli_read_adapters() {
+async fn analytics_overview_calls_stable_v1_endpoints() {
     let server = MockServer::start().await;
     let expected_body = serde_json::json!({
-        "startTime": 1782921600000_i64,
-        "endTime": 1783526400000_i64,
+        "startTime": "2026-07-01T16:00:00.000Z",
+        "endTime": "2026-07-08T16:00:00.000Z",
         "timezone": "GMT+8",
         "from": "8613800138000",
         "regionCode": "CN",
         "messageCategory": "marketing,utility"
     });
     for endpoint in [
-        "/api/cli/read/whatsapp/analytics/delivery",
-        "/api/cli/read/whatsapp/analytics/message-detail",
-        "/api/cli/read/whatsapp/analytics/failure-reasons",
+        "/api/cli/v1/whatsapp/analytics/delivery",
+        "/api/cli/v1/whatsapp/analytics/message-detail",
+        "/api/cli/v1/whatsapp/analytics/failure-reasons",
     ] {
         Mock::given(method("POST"))
             .and(path(endpoint))
@@ -312,10 +312,10 @@ async fn analytics_overview_calls_cli_read_adapters() {
 }
 
 #[tokio::test]
-async fn analytics_logs_calls_cli_message_search_adapter() {
+async fn analytics_logs_calls_stable_v1_message_search() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path("/api/cli/read/whatsapp/messages/search"))
+        .and(path("/api/cli/v1/whatsapp/messages/search"))
         .and(header("authorization", "Bearer YCLI.access"))
         .and(body_json(serde_json::json!({
             "direction": "OutBound",
@@ -374,10 +374,10 @@ async fn analytics_logs_calls_cli_message_search_adapter() {
 }
 
 #[tokio::test]
-async fn analytics_calling_logs_calls_cli_calling_search_adapter() {
+async fn analytics_calling_logs_calls_stable_v1_calling_search() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path("/api/cli/read/calling/logs/search"))
+        .and(path("/api/cli/v1/calling/logs/search"))
         .and(header("authorization", "Bearer YCLI.access"))
         .and(body_json(serde_json::json!({
             "startTime": 1782921600000_i64,
@@ -452,7 +452,7 @@ fn saved_config(base_url: String) -> ycloud_console_cli::config::Config {
 async fn request_times_out_instead_of_waiting_indefinitely() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/cli/auth/tenants/list"))
+        .and(path("/api/cli/v1/tenants"))
         .respond_with(
             ResponseTemplate::new(200)
                 .set_delay(Duration::from_millis(200))
@@ -549,7 +549,7 @@ async fn permission_denial_does_not_fallback_and_surfaces_correlation() {
             "code": 403,
             "msg": "Permission denied",
             "data": null,
-            "error": {"code": "permission_denied", "message": "Permission denied", "retryable": false, "details": {}},
+            "error": {"code": "permission_denied", "message": "Permission denied", "retryable": false, "details": {"requiredPermission": "yc.integration.status.read"}},
             "requestId": "req-denied",
             "traceId": "trace-denied",
             "warnings": []
@@ -565,11 +565,20 @@ async fn permission_denial_does_not_fallback_and_surfaces_correlation() {
         .await;
 
     let client = DashboardClient::new(server.uri()).unwrap();
-    let error = client
-        .integrations_status("YCLI.access")
-        .await
-        .unwrap_err()
-        .to_string();
+    let error = client.integrations_status("YCLI.access").await.unwrap_err();
+    let typed = error
+        .downcast_ref::<ycloud_console_cli::http::DashboardApiError>()
+        .expect("v1 error should preserve its typed fields");
+
+    assert_eq!(typed.status(), reqwest::StatusCode::FORBIDDEN);
+    assert_eq!(typed.code(), "permission_denied");
+    assert_eq!(
+        typed.details().unwrap()["requiredPermission"],
+        "yc.integration.status.read"
+    );
+    assert_eq!(typed.request_id(), Some("req-denied"));
+    assert_eq!(typed.trace_id(), Some("trace-denied"));
+    let error = error.to_string();
 
     assert!(
         error.contains("permission_denied"),

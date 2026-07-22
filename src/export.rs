@@ -43,7 +43,10 @@ pub async fn export_conversations(
     args: ConversationExportArgs,
 ) -> Result<()> {
     let config = Config::load(config_path)?;
-    let idempotency_key = args.idempotency_key.clone().unwrap_or_else(idempotency_key);
+    let idempotency_key = args
+        .idempotency_key
+        .clone()
+        .unwrap_or_else(new_idempotency_key);
     let request = json!({
         "filter": conversation_filter(&args.filter),
         "columns": args.columns,
@@ -66,7 +69,10 @@ pub async fn export_contacts(
     args: ContactExportArgs,
 ) -> Result<()> {
     let config = Config::load(config_path)?;
-    let idempotency_key = args.idempotency_key.clone().unwrap_or_else(idempotency_key);
+    let idempotency_key = args
+        .idempotency_key
+        .clone()
+        .unwrap_or_else(new_idempotency_key);
     let request = json!({
         "condition": args.condition,
         "segmentId": args.segment_id,
@@ -104,7 +110,10 @@ pub async fn retry_export(
     args: ExportRetryArgs,
 ) -> Result<()> {
     let config = Config::load(config_path)?;
-    let idempotency_key = args.idempotency_key.clone().unwrap_or_else(idempotency_key);
+    let idempotency_key = args
+        .idempotency_key
+        .clone()
+        .unwrap_or_else(new_idempotency_key);
     let task = client
         .retry_export(&config.auth.access_token, &args.task_id, &idempotency_key)
         .await?
@@ -312,7 +321,7 @@ fn partial_path(destination: &Path) -> PathBuf {
     PathBuf::from(value)
 }
 
-fn idempotency_key() -> String {
+pub(crate) fn new_idempotency_key() -> String {
     format!("ycloud-cli-{:032x}", rand::random::<u128>())
 }
 

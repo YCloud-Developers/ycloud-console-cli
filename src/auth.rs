@@ -15,7 +15,7 @@ use url::Url;
 use crate::{
     cli::{
         AnalyticsCallingLogsArgs, AnalyticsLogsArgs, AnalyticsOverviewArgs, AnalyticsRangeArgs,
-        ContactsListArgs, LoginArgs,
+        ContactsListArgs, LoginArgs, PermissionProfile,
     },
     config::{self, AuthConfig, Config, DashboardConfig},
     http::{
@@ -119,6 +119,26 @@ pub async fn login(client: &DashboardClient, config_path: &Path, args: LoginArgs
         config_path.display()
     );
     Ok(())
+}
+
+pub async fn reauthorize(
+    client: &DashboardClient,
+    config_path: &Path,
+    requested_permissions: Vec<String>,
+) -> Result<()> {
+    login(
+        client,
+        config_path,
+        LoginArgs {
+            profile: PermissionProfile::Custom,
+            permissions: requested_permissions,
+            code: None,
+            code_verifier: None,
+            state: None,
+            manual: false,
+        },
+    )
+    .await
 }
 
 fn wait_for_callback(
@@ -577,12 +597,12 @@ mod tests {
         .expect("write callback request");
 
         let result = handle_callback(&mut callback, expected_state);
-        drop(callback);
 
         let mut response = String::new();
         browser
             .read_to_string(&mut response)
             .expect("read callback response");
+        drop(callback);
         (result, response)
     }
 }

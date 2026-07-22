@@ -11,9 +11,9 @@
 - `ycloud inbox conversations export` creates a permission-scoped asynchronous export and includes a separate contacts artifact by default.
 - `ycloud contacts export` provides the same artifact workflow for contact filters without first exporting conversations.
 - `ycloud analytics outline` and `ycloud analytics overview` use the stable WhatsApp analytics contract. The CLI sends RFC 3339 time values and an IANA timezone such as `Asia/Shanghai`.
-- Stable commands fall back to the matching `/api/cli/read/**` compatibility adapter only when the server returns HTTP 404 or 405 during a rolling upgrade. Authentication, authorization, validation, and server errors are never retried through the legacy adapter.
-- Every HTTP attempt sends a new `X-Request-Id`; attempts from one command share a non-secret invocation ID and mode. Typed `rate_limited` responses never trigger legacy fallback.
-- `ycloud contacts list`, `ycloud analytics logs`, and `ycloud analytics calling-logs` remain compatibility-only P0 commands. `YCLI.` tokens do not call ordinary Dashboard paths.
+- Business commands use only the stable `/api/cli/v1/**` contract and never fall back to `/api/cli/read/**`. The legacy adapters remain server-side for CLI v0.1.3 compatibility.
+- Every HTTP attempt sends a new `X-Request-Id`; attempts from one command share a non-secret invocation ID and mode.
+- `ycloud contacts list`, `ycloud analytics logs`, and `ycloud analytics calling-logs` use stable web-owned v1 contracts. `YCLI.` tokens do not call ordinary Dashboard paths.
 - `ycloud refresh` rotates the refresh token.
 - `ycloud logout` revokes the current token and removes the local profile.
 
@@ -125,6 +125,15 @@ ycloud login --profile readonly \
   --permission yc.inbox.conversation.export \
   --permission yc.contact.record.export
 ```
+
+When a business command receives the typed v1 response `HTTP 403` with
+`error.code=permission_denied`, an interactive terminal shows the missing permission set and asks
+before opening browser authorization. Existing custom permissions are retained, a valid new token
+is saved only after authorization succeeds, and the original command is retried once. Automation
+and non-TTY invocations never prompt or open a browser; they print the complete `ycloud login
+--profile custom ...` remediation command and exit nonzero. If a permission was requested but is
+not effective, update the account role or data range instead of requesting the same permission
+again.
 
 Export creation and retry are never automatically retried. Task polling and signed-artifact URL
 requests are safe reads with bounded retries. Ordinary API requests have a 30-second total timeout;
