@@ -1,14 +1,15 @@
 pub mod auth;
 pub mod cli;
 pub mod config;
+pub mod export;
 pub mod http;
 pub mod pkce;
 
 use anyhow::Result;
 use clap::Parser;
 use cli::{
-    AnalyticsCommand, Cli, Command, ContactsCommand, IntegrationsCommand, TenantsCommand,
-    DEFAULT_DASHBOARD_URL,
+    AnalyticsCommand, Cli, Command, ContactsCommand, ExportsCommand, InboxCommand,
+    InboxConversationsCommand, IntegrationsCommand, TenantsCommand, DEFAULT_DASHBOARD_URL,
 };
 use config::Config;
 
@@ -65,7 +66,44 @@ pub async fn run() -> Result<()> {
                 )?;
                 auth::contacts_metadata(&client, &config_path).await
             }
+            ContactsCommand::Export(args) => {
+                let client = client_for_saved_profile(
+                    dashboard_url_override,
+                    &config_path,
+                    invocation_mode,
+                )?;
+                export::export_contacts(&client, &config_path, args).await
+            }
         },
+        Command::Inbox { command } => {
+            let client =
+                client_for_saved_profile(dashboard_url_override, &config_path, invocation_mode)?;
+            match command {
+                InboxCommand::Conversations { command } => match command {
+                    InboxConversationsCommand::Search(args) => {
+                        export::search_conversations(&client, &config_path, args).await
+                    }
+                    InboxConversationsCommand::Export(args) => {
+                        export::export_conversations(&client, &config_path, args).await
+                    }
+                },
+            }
+        }
+        Command::Exports { command } => {
+            let client =
+                client_for_saved_profile(dashboard_url_override, &config_path, invocation_mode)?;
+            match command {
+                ExportsCommand::Query(args) => {
+                    export::query_export(&client, &config_path, args).await
+                }
+                ExportsCommand::Retry(args) => {
+                    export::retry_export(&client, &config_path, args).await
+                }
+                ExportsCommand::Download(args) => {
+                    export::download_export(&client, &config_path, args).await
+                }
+            }
+        }
         Command::Integrations { command } => match command {
             IntegrationsCommand::Status => {
                 let client = client_for_saved_profile(
