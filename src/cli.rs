@@ -7,7 +7,7 @@ use crate::http::InvocationMode;
 
 pub const DEFAULT_DASHBOARD_URL: &str = "https://www.ycloud.com";
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Parser, Clone)]
 #[command(name = "ycloud", version, about = "YCloud Console CLI")]
 pub struct Cli {
     #[arg(long, global = true, env = "YCLOUD_DASHBOARD_URL")]
@@ -54,7 +54,7 @@ impl Cli {
     }
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Subcommand, Clone)]
 pub enum Command {
     #[command(about = "Authorize ycloud with a logged-in YCloud Dashboard browser")]
     Login(LoginArgs),
@@ -96,12 +96,12 @@ pub enum Command {
     Logout,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Subcommand, Clone)]
 pub enum TenantsCommand {
     List,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Subcommand, Clone)]
 pub enum AnalyticsCommand {
     #[command(about = "List analytics filter options for the selected time range")]
     Outline(AnalyticsRangeArgs),
@@ -113,7 +113,7 @@ pub enum AnalyticsCommand {
     CallingLogs(AnalyticsCallingLogsArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Clone)]
 pub struct LoginArgs {
     #[arg(long, value_enum, default_value_t = PermissionProfile::Basic)]
     pub profile: PermissionProfile,
@@ -170,7 +170,7 @@ impl std::fmt::Display for PermissionProfile {
     }
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Subcommand, Clone)]
 pub enum ContactsCommand {
     List(ContactsListArgs),
     #[command(about = "List contact sources, tags, segments, and segment filters")]
@@ -179,7 +179,7 @@ pub enum ContactsCommand {
     Export(ContactExportArgs),
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Subcommand, Clone)]
 pub enum InboxCommand {
     Conversations {
         #[command(subcommand)]
@@ -187,7 +187,7 @@ pub enum InboxCommand {
     },
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Subcommand, Clone)]
 pub enum InboxConversationsCommand {
     #[command(about = "Search permission-scoped Inbox conversations")]
     Search(ConversationSearchArgs),
@@ -195,7 +195,7 @@ pub enum InboxConversationsCommand {
     Export(ConversationExportArgs),
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Subcommand, Clone)]
 pub enum ExportsCommand {
     #[command(about = "Query an export task")]
     Query(ExportTaskArgs),
@@ -386,13 +386,13 @@ pub struct ExportDownloadArgs {
     pub json: bool,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Subcommand, Clone)]
 pub enum IntegrationsCommand {
     #[command(about = "List enabled status for Dashboard integrations")]
     Status,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Clone)]
 pub struct ContactsListArgs {
     #[arg(long, default_value_t = 1, help = "Page number")]
     pub page_no: u32,

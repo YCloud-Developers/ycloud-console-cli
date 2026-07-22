@@ -1,4 +1,8 @@
-use std::{fs, path::Path};
+use std::{
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -40,11 +44,52 @@ impl Config {
             })?;
         }
         let raw = toml::to_string_pretty(self).context("failed to serialize config")?;
-        fs::write(path, raw)
-            .with_context(|| format!("failed to write config at {}", path.display()))?;
-        restrict_owner_only(path)?;
-        Ok(())
+        let temporary = temporary_path(path);
+        let result = (|| -> Result<()> {
+            let mut file = create_private_file(&temporary)?;
+            file.write_all(raw.as_bytes())
+                .with_context(|| format!("failed to write config at {}", temporary.display()))?;
+            file.sync_all()
+                .with_context(|| format!("failed to sync config at {}", temporary.display()))?;
+            restrict_owner_only(&temporary)?;
+            fs::rename(&temporary, path)
+                .with_context(|| format!("failed to replace config at {}", path.display()))?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result
     }
+}
+
+fn temporary_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("config");
+    path.with_file_name(format!(".{file_name}.{:032x}.tmp", rand::random::<u128>()))
+}
+
+#[cfg(unix)]
+fn create_private_file(path: &Path) -> Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .with_context(|| format!("failed to create temporary config at {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn create_private_file(path: &Path) -> Result<fs::File> {
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .with_context(|| format!("failed to create temporary config at {}", path.display()))
 }
 
 pub fn remove(path: &Path) -> Result<()> {
