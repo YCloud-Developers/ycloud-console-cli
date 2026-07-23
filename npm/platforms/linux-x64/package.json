@@ -1,6 +1,6 @@
 {
   "name": "@ycloud-ai/console-cli-linux-x64",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "YCloud Console CLI native binary for Linux x64",
   "homepage": "https://www.ycloud.com",
   "repository": {
