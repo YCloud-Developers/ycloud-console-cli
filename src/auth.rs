@@ -606,7 +606,10 @@ mod tests {
                 std::io::ErrorKind::ConnectionReset,
                 "read callback response"
             );
-            assert!(!response.is_empty(), "callback response should not be empty");
+            assert!(
+                !response.is_empty(),
+                "callback response should not be empty"
+            );
         }
         (result, response)
     }
