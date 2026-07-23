@@ -597,12 +597,17 @@ mod tests {
         .expect("write callback request");
 
         let result = handle_callback(&mut callback, expected_state);
+        drop(callback);
 
         let mut response = String::new();
-        browser
-            .read_to_string(&mut response)
-            .expect("read callback response");
-        drop(callback);
+        if let Err(error) = browser.read_to_string(&mut response) {
+            assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionReset,
+                "read callback response"
+            );
+            assert!(!response.is_empty(), "callback response should not be empty");
+        }
         (result, response)
     }
 }

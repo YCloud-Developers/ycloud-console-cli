@@ -8,7 +8,9 @@
 - `ycloud whoami` reads the current Console CLI identity.
 - `ycloud tenants list` lists tenants available to the current Console CLI token.
 - `ycloud integrations status` and `ycloud contacts metadata` use the stable `/api/cli/v1/**` contract.
-- `ycloud inbox conversations export` creates a permission-scoped asynchronous export and includes a separate contacts artifact by default.
+- `ycloud inbox conversations export` creates one permission-scoped asynchronous task containing
+  conversations, ordered message JSONL parts, a sanitized manifest, and a separate contacts
+  artifact by default.
 - `ycloud contacts export` provides the same artifact workflow for contact filters without first exporting conversations.
 - `ycloud analytics outline` and `ycloud analytics overview` use the stable WhatsApp analytics contract. The CLI sends RFC 3339 time values and an IANA timezone such as `Asia/Shanghai`.
 - Business commands use only the stable `/api/cli/v1/**` contract and never fall back to `/api/cli/read/**`. The legacy adapters remain server-side for CLI v0.1.3 compatibility.
@@ -67,7 +69,7 @@ ycloud inbox conversations search --inbox-id inbox-1 --limit 100
 ycloud inbox conversations export --inbox-id inbox-1 --output-dir ./export
 ycloud contacts export --condition vip --format csv --output-dir ./export
 ycloud exports query TASK_ID
-ycloud exports download TASK_ID --artifact conversations,contacts,manifest --output-dir ./export
+ycloud exports download TASK_ID --artifact conversations,messages,contacts,manifest --output-dir ./export
 ycloud analytics outline
 ycloud analytics overview
 ycloud analytics logs --page-no 1 --page-size 20
@@ -117,12 +119,14 @@ ycloud login --profile basic \
 ```
 
 Profiles are expanded by the backend. The token and local config store only the resulting atomic
-requested permissions. Inbox and Contact export permissions are active but require explicit
+requested permissions. Inbox conversation, Inbox message, and Contact export permissions are
+active but require explicit
 enablement and are not included in any default profile:
 
 ```bash
 ycloud login --profile readonly \
   --permission yc.inbox.conversation.export \
+  --permission yc.inbox.message.export \
   --permission yc.contact.record.export
 ```
 

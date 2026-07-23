@@ -47,20 +47,25 @@ pub async fn export_conversations(
         .idempotency_key
         .clone()
         .unwrap_or_else(new_idempotency_key);
-    let request = json!({
-        "filter": conversation_filter(&args.filter),
-        "columns": args.columns,
-        "format": args.format.as_api_value(),
-        "includeContacts": !args.no_contacts,
-        "archive": args.archive,
-        "timezone": args.timezone,
-        "fileName": args.file_name,
-    });
+    let request = conversation_export_request(&args);
     let task = client
         .create_conversation_export(&config.auth.access_token, &idempotency_key, &request)
         .await?
         .require_data("conversation export")?;
     finish_created_task(client, &config, task, args.wait).await
+}
+
+fn conversation_export_request(args: &ConversationExportArgs) -> Value {
+    json!({
+        "filter": conversation_filter(&args.filter),
+        "columns": args.columns,
+        "format": args.format.as_api_value(),
+        "includeContacts": !args.no_contacts,
+        "includeMessages": true,
+        "archive": args.archive,
+        "timezone": args.timezone,
+        "fileName": args.file_name,
+    })
 }
 
 pub async fn export_contacts(
@@ -205,17 +210,23 @@ async fn download_artifacts(
 ) -> Result<Vec<DownloadedArtifact>> {
     fs::create_dir_all(output_dir)
         .with_context(|| format!("failed to create {}", output_dir.display()))?;
-    let selected: Vec<String> = if selected.is_empty() {
+    let selected: Vec<&crate::http::ExportArtifact> = if selected.is_empty() {
         task.artifacts
             .iter()
             .filter(|artifact| artifact.status.eq_ignore_ascii_case("READY"))
             .filter(|artifact| !artifact.r#type.eq_ignore_ascii_case("ARCHIVE"))
-            .map(|artifact| artifact.r#type.to_ascii_uppercase())
             .collect()
     } else {
-        selected
+        task.artifacts
             .iter()
-            .map(|artifact| artifact.as_api_value().to_string())
+            .filter(|artifact| artifact.status.eq_ignore_ascii_case("READY"))
+            .filter(|artifact| {
+                selected.iter().any(|requested| {
+                    requested
+                        .as_api_value()
+                        .eq_ignore_ascii_case(&artifact.r#type)
+                })
+            })
             .collect()
     };
     if selected.is_empty() {
@@ -223,9 +234,15 @@ async fn download_artifacts(
     }
 
     let mut downloads = Vec::new();
-    for artifact_type in selected {
+    for artifact in selected {
         let metadata = client
-            .export_artifact_url(&config.auth.access_token, &task.task_id, &artifact_type)
+            .export_artifact_url(
+                &config.auth.access_token,
+                &task.task_id,
+                &artifact.r#type,
+                artifact.artifact_id.as_deref(),
+                artifact.part_number,
+            )
             .await?
             .require_data("artifact URL")?;
         let safe_name = safe_file_name(&metadata.file_name)?;
@@ -261,7 +278,9 @@ async fn download_artifacts(
         fs::rename(&partial, &destination)
             .with_context(|| format!("failed to finalize artifact {}", destination.display()))?;
         downloads.push(DownloadedArtifact {
-            artifact_type,
+            artifact_id: metadata.artifact_id,
+            artifact_type: metadata.artifact_type,
+            part_number: metadata.part_number,
             path: destination,
             size: receipt.size,
             checksum_sha256: receipt.checksum_sha256,
@@ -363,7 +382,9 @@ fn print_downloads(
 }
 
 struct DownloadedArtifact {
+    artifact_id: Option<String>,
     artifact_type: String,
+    part_number: Option<u32>,
     path: PathBuf,
     size: u64,
     checksum_sha256: String,
@@ -372,7 +393,9 @@ struct DownloadedArtifact {
 impl DownloadedArtifact {
     fn json(&self) -> Value {
         json!({
+            "artifactId": self.artifact_id,
             "artifactType": self.artifact_type,
+            "partNumber": self.part_number,
             "path": self.path,
             "size": self.size,
             "checksumSha256": self.checksum_sha256,
@@ -398,5 +421,29 @@ mod tests {
             ..ConversationFilterArgs::default()
         });
         assert_eq!(value, json!({"condition": "vip"}));
+    }
+
+    #[test]
+    fn conversation_export_always_requests_messages() {
+        let request = conversation_export_request(&ConversationExportArgs {
+            filter: ConversationFilterArgs::default(),
+            columns: Vec::new(),
+            format: crate::cli::ExportFormat::Auto,
+            no_contacts: false,
+            archive: false,
+            timezone: "GMT".to_string(),
+            file_name: None,
+            idempotency_key: None,
+            wait: ExportWaitArgs {
+                no_wait: true,
+                output_dir: PathBuf::from("."),
+                artifacts: Vec::new(),
+                timeout_seconds: 3600,
+                json: false,
+            },
+        });
+
+        assert_eq!(request["includeMessages"], json!(true));
+        assert_eq!(request["includeContacts"], json!(true));
     }
 }
