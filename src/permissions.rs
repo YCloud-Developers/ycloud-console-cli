@@ -122,7 +122,7 @@ fn static_permissions(command: &Command) -> Vec<&'static str> {
                     command: InboxConversationsCommand::Export(args),
                 },
         } => {
-            let mut permissions = vec!["yc.inbox.conversation.export"];
+            let mut permissions = vec!["yc.inbox.conversation.export", "yc.inbox.message.export"];
             if !args.no_contacts {
                 permissions.push("yc.contact.record.export");
             }
@@ -220,12 +220,17 @@ mod tests {
             [
                 "yc.contact.record.export",
                 "yc.inbox.conversation.export",
+                "yc.inbox.message.export",
                 "yc.integration.status.read"
             ]
         );
         assert_eq!(
             plan.missing_permissions,
-            ["yc.contact.record.export", "yc.inbox.conversation.export"]
+            [
+                "yc.contact.record.export",
+                "yc.inbox.conversation.export",
+                "yc.inbox.message.export"
+            ]
         );
     }
 

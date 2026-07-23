@@ -232,6 +232,7 @@ impl std::fmt::Display for ExportFormat {
 pub enum ExportArtifactType {
     Conversations,
     Contacts,
+    Messages,
     Manifest,
     Archive,
 }
@@ -241,6 +242,7 @@ impl ExportArtifactType {
         match self {
             Self::Conversations => "CONVERSATIONS",
             Self::Contacts => "CONTACTS",
+            Self::Messages => "MESSAGES",
             Self::Manifest => "MANIFEST",
             Self::Archive => "ARCHIVE",
         }

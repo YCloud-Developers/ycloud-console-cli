@@ -360,11 +360,18 @@ impl DashboardClient {
         access_token: &str,
         task_id: &str,
         artifact_type: &str,
+        artifact_id: Option<&str>,
+        part_number: Option<u32>,
     ) -> Result<ApiEnvelope<ArtifactUrl>> {
         self.post_json_safe(
             "/api/cli/v1/exports/artifact-url",
             Some(access_token),
-            &serde_json::json!({"taskId": task_id, "artifactType": artifact_type}),
+            &serde_json::json!({
+                "taskId": task_id,
+                "artifactType": artifact_type,
+                "artifactId": artifact_id,
+                "partNumber": part_number
+            }),
         )
         .await
     }
@@ -831,6 +838,10 @@ pub struct ExportTask {
     #[serde(default)]
     pub previous_task_id: Option<String>,
     #[serde(default)]
+    pub truncated: Option<bool>,
+    #[serde(default)]
+    pub truncation_reason: Option<String>,
+    #[serde(default)]
     pub artifacts: Vec<ExportArtifact>,
     #[serde(default)]
     pub warnings: Vec<String>,
@@ -852,7 +863,11 @@ impl ExportTask {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportArtifact {
+    #[serde(default)]
+    pub artifact_id: Option<String>,
     pub r#type: String,
+    #[serde(default)]
+    pub part_number: Option<u32>,
     #[serde(default)]
     pub format: Option<String>,
     #[serde(default)]
@@ -870,7 +885,11 @@ pub struct ExportArtifact {
 #[serde(rename_all = "camelCase")]
 pub struct ArtifactUrl {
     pub task_id: String,
+    #[serde(default)]
+    pub artifact_id: Option<String>,
     pub artifact_type: String,
+    #[serde(default)]
+    pub part_number: Option<u32>,
     pub file_name: String,
     pub url: String,
     pub expires_at: i64,
