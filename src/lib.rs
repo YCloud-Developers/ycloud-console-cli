@@ -5,6 +5,7 @@ pub mod export;
 pub mod http;
 pub mod permissions;
 pub mod pkce;
+pub mod waba_assignment;
 
 use std::io::{self, Write};
 use std::path::Path;
@@ -13,7 +14,8 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{
     AnalyticsCommand, Cli, Command, ContactsCommand, ExportsCommand, InboxCommand,
-    InboxConversationsCommand, IntegrationsCommand, TenantsCommand, DEFAULT_DASHBOARD_URL,
+    InboxConversationsCommand, IntegrationsCommand, TenantsCommand, WabaAssignmentCommand,
+    WhatsappCommand, DEFAULT_DASHBOARD_URL,
 };
 use config::Config;
 use http::{DashboardApiError, InvocationMode};
@@ -136,6 +138,16 @@ async fn execute_once(
                 ContactsCommand::Export(args) => {
                     export::export_contacts(&client, config_path, args.clone()).await
                 }
+            }
+        }
+        Command::Whatsapp { command } => {
+            let client = saved_client(cli, config_path, invocation_mode)?;
+            match command {
+                WhatsappCommand::WabaAssignment { command } => match command {
+                    WabaAssignmentCommand::List(args) => {
+                        waba_assignment::list(&client, config_path, args.clone()).await
+                    }
+                },
             }
         }
         Command::Inbox { command } => {
