@@ -1,6 +1,6 @@
 [package]
 name = "ycloud-console-cli"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 description = "Console-oriented YCloud CLI using browser grant auth"
 license = "MIT"
