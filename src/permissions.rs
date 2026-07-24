@@ -5,12 +5,18 @@ use reqwest::StatusCode;
 use crate::{
     cli::{
         AnalyticsCommand, Cli, Command, ContactsCommand, ExportsCommand, InboxCommand,
-        InboxConversationsCommand, IntegrationsCommand, TenantsCommand,
+        InboxConversationsCommand, IntegrationsCommand, TenantsCommand, WabaAssignmentCommand,
+        WhatsappCommand,
     },
     http::DashboardApiError,
 };
 
 pub const PERMISSION_DENIED: &str = "permission_denied";
+pub const WABA_ASSIGNMENT_PERMISSIONS: [&str; 3] = [
+    "yc.whatsapp.phone.read",
+    "yc.inbox.phone-assignment.read",
+    "yc.inbox.assignment-rule.read",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReauthorizationPlan {
@@ -110,6 +116,12 @@ fn static_permissions(command: &Command) -> Vec<&'static str> {
         Command::Analytics {
             command: AnalyticsCommand::CallingLogs(_),
         } => vec!["yc.calling.log.read"],
+        Command::Whatsapp {
+            command:
+                WhatsappCommand::WabaAssignment {
+                    command: WabaAssignmentCommand::List(_),
+                },
+        } => WABA_ASSIGNMENT_PERMISSIONS.to_vec(),
         Command::Inbox {
             command:
                 InboxCommand::Conversations {
@@ -280,6 +292,21 @@ mod tests {
         assert_eq!(
             plan.login_command,
             "ycloud --dashboard-url https://www-test-red.ycloud.com --config '/tmp/ycloud profile.toml' login --profile custom --permission yc.contact.record.read"
+        );
+    }
+
+    #[test]
+    fn waba_assignment_requests_all_three_atomic_permissions() {
+        let cli = Cli::try_parse_from(["ycloud", "whatsapp", "waba-assignment", "list"]).unwrap();
+        let plan = plan(&cli, &[], &permission_error("yc.whatsapp.phone.read")).unwrap();
+
+        assert_eq!(
+            plan.requested_permissions,
+            [
+                "yc.inbox.assignment-rule.read",
+                "yc.inbox.phone-assignment.read",
+                "yc.whatsapp.phone.read"
+            ]
         );
     }
 }

@@ -11,6 +11,7 @@ use tokio::io::AsyncWriteExt;
 use url::Url;
 
 use crate::pkce::PkcePair;
+use crate::waba_assignment::{AssignmentRule, PhoneAssignment, PhoneIdsSearchRequest, PhoneNumber};
 
 #[derive(Debug, Clone)]
 pub struct DashboardClient {
@@ -291,6 +292,51 @@ impl DashboardClient {
     ) -> Result<ApiEnvelope<serde_json::Value>> {
         self.post_json_safe(
             "/api/cli/v1/inbox/conversations/search",
+            Some(access_token),
+            request,
+        )
+        .await
+    }
+
+    pub async fn whatsapp_phone_numbers(
+        &self,
+        access_token: &str,
+        waba_id: Option<&str>,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<ApiEnvelope<Vec<PhoneNumber>>> {
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        if let Some(waba_id) = waba_id {
+            query.append_pair("wabaId", waba_id);
+        }
+        if let Some(cursor) = cursor {
+            query.append_pair("cursor", cursor);
+        }
+        query.append_pair("limit", &limit.to_string());
+        let path = format!("/api/cli/v1/whatsapp/phone-numbers?{}", query.finish());
+        self.get_json_safe(&path, Some(access_token)).await
+    }
+
+    pub async fn inbox_phone_assignments(
+        &self,
+        access_token: &str,
+        request: &PhoneIdsSearchRequest<'_>,
+    ) -> Result<ApiEnvelope<Vec<PhoneAssignment>>> {
+        self.post_json_safe(
+            "/api/cli/v1/inbox/phone-assignments/search",
+            Some(access_token),
+            request,
+        )
+        .await
+    }
+
+    pub async fn inbox_assignment_rules(
+        &self,
+        access_token: &str,
+        request: &PhoneIdsSearchRequest<'_>,
+    ) -> Result<ApiEnvelope<Vec<AssignmentRule>>> {
+        self.post_json_safe(
+            "/api/cli/v1/inbox/assignment-rules/search",
             Some(access_token),
             request,
         )

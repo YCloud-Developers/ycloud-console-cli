@@ -70,6 +70,11 @@ pub enum Command {
         #[command(subcommand)]
         command: ContactsCommand,
     },
+    #[command(about = "Query WhatsApp account and phone-number data")]
+    Whatsapp {
+        #[command(subcommand)]
+        command: WhatsappCommand,
+    },
     #[command(about = "Search and export Inbox conversations")]
     Inbox {
         #[command(subcommand)]
@@ -177,6 +182,29 @@ pub enum ContactsCommand {
     Metadata,
     #[command(about = "Export contacts asynchronously")]
     Export(ContactExportArgs),
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum WhatsappCommand {
+    #[command(about = "Inspect WABA phone numbers, assignments, and routing rules")]
+    WabaAssignment {
+        #[command(subcommand)]
+        command: WabaAssignmentCommand,
+    },
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum WabaAssignmentCommand {
+    #[command(about = "List the complete current WABA assignment report")]
+    List(WabaAssignmentListArgs),
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct WabaAssignmentListArgs {
+    #[arg(long)]
+    pub waba_id: Option<String>,
+    #[arg(long, help = "Print the complete machine-readable report as JSON")]
+    pub json: bool,
 }
 
 #[derive(Debug, Subcommand, Clone)]
