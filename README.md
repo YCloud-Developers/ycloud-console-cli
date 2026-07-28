@@ -76,7 +76,7 @@ ycloud exports download TASK_ID --artifact conversations,messages,contacts,manif
 ycloud analytics outline
 ycloud analytics overview
 ycloud analytics trend --preset last-30-days
-ycloud analytics templates list --preset last-90-days --page-size 50
+ycloud analytics templates list --preset last-90-days
 ycloud analytics templates export --preset last-90-days --output-dir ./export
 ycloud analytics logs --page-no 1 --page-size 20
 ycloud analytics calling-logs --page-no 1 --page-size 20
@@ -91,6 +91,8 @@ Downloads are streamed through a `.part` file, verified against the server-provi
 SHA-256 checksum, and never overwrite an existing file.
 
 Analytics commands default to the last 7 days and accept at most 90 natural days. Ranges up to 30 days use daily trend buckets; larger ranges use weekly buckets. Delivery rate is calculated from the aggregated delivered and total counts, and an empty denominator is printed as `-` in tables and `null` in JSON.
+
+Template statistics use the Dashboard's fixed page size of 10. Message-type rows contain total, delivered, and weighted delivery rate; failed and processing counts are available only for each overall trend bucket.
 
 CLI flags accept millisecond timestamps and convert them to RFC 3339 before sending. Analytics defaults to the IANA timezone `Asia/Shanghai`. Filters are repeatable; comma-separated `--message-category` is not part of the 0.2.0 interface. Table output is the default and `--json` selects machine-readable output:
 

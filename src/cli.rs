@@ -602,8 +602,6 @@ pub struct AnalyticsTemplatesListArgs {
     pub template_name: Option<String>,
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
     pub page_no: u32,
-    #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u32).range(1..=100))]
-    pub page_size: u32,
     #[arg(long, value_enum, default_value_t = AnalyticsTemplateSortField::Total)]
     pub sort_field: AnalyticsTemplateSortField,
     #[arg(long, value_enum, default_value_t = SortDirection::Desc)]

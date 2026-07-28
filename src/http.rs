@@ -1095,8 +1095,6 @@ pub struct AnalyticsMetric {
     pub message_type: String,
     pub total: Option<u64>,
     pub delivered: Option<u64>,
-    pub failed: Option<u64>,
-    pub processing: Option<u64>,
     pub delivery_rate: Option<f64>,
 }
 

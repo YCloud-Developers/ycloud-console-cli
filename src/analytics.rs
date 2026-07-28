@@ -108,7 +108,7 @@ pub async fn templates_list(
         analytics: request(&args.filter)?,
         template_name: args.template_name,
         page_no: args.page_no,
-        page_size: args.page_size,
+        page_size: 10,
         sort_field: args.sort_field.as_api_value().to_string(),
         sort_direction: args.sort_direction.as_api_value().to_string(),
     };
@@ -224,14 +224,7 @@ fn print_section<T>(title: &str, result: &Result<T>, render: fn(&T) -> Result<()
 fn print_summary(data: &AnalyticsSummary) -> Result<()> {
     let rows = data.message_types.iter().map(metric_row).collect();
     print_table(
-        &[
-            "Message type",
-            "Total",
-            "Delivered",
-            "Failed",
-            "Processing",
-            "Delivery rate",
-        ],
+        &["Message type", "Total", "Delivered", "Delivery rate"],
         rows,
     );
     Ok(())
@@ -242,8 +235,6 @@ fn metric_row(metric: &AnalyticsMetric) -> Vec<String> {
         metric.message_type.clone(),
         number(metric.total),
         number(metric.delivered),
-        number(metric.failed),
-        number(metric.processing),
         rate(metric.delivery_rate),
     ]
 }
@@ -271,9 +262,15 @@ fn print_trend(data: &AnalyticsTrend) -> Result<()> {
             rate(bucket.delivery_rate),
         ]);
         for metric in &bucket.message_types {
-            let mut row = vec![period.clone()];
-            row.extend(metric_row(metric));
-            rows.push(row);
+            rows.push(vec![
+                period.clone(),
+                metric.message_type.clone(),
+                number(metric.total),
+                number(metric.delivered),
+                "-".to_string(),
+                "-".to_string(),
+                rate(metric.delivery_rate),
+            ]);
         }
     }
     print_table(
