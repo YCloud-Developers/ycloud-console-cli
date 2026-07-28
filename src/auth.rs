@@ -14,13 +14,13 @@ use url::Url;
 
 use crate::{
     cli::{
-        AnalyticsCallingLogsArgs, AnalyticsLogsArgs, AnalyticsOverviewArgs, AnalyticsRangeArgs,
-        ContactsListArgs, LoginArgs, PermissionProfile,
+        AnalyticsCallingLogsArgs, AnalyticsLogsArgs, AnalyticsRangeArgs, ContactsListArgs,
+        LoginArgs, PermissionProfile,
     },
     config::{self, AuthConfig, Config, DashboardConfig},
     http::{
-        AnalyticsCallingLogsRequest, AnalyticsLogsRequest, AnalyticsOverviewRequest,
-        AnalyticsRangeRequest, ContactsSearchRequest, DashboardClient, TokenData,
+        AnalyticsCallingLogsRequest, AnalyticsLogsRequest, AnalyticsRangeRequest,
+        ContactsSearchRequest, DashboardClient, TokenData,
     },
     pkce,
 };
@@ -351,54 +351,6 @@ pub async fn analytics_outline(
     Ok(())
 }
 
-pub async fn analytics_overview(
-    client: &DashboardClient,
-    config_path: &Path,
-    args: AnalyticsOverviewArgs,
-) -> Result<()> {
-    let config = Config::load(config_path)?;
-    let range = analytics_range(&args.range)?;
-    let request = AnalyticsOverviewRequest {
-        start_time: range.start_time,
-        end_time: range.end_time,
-        timezone: &args.timezone,
-        from: args.from.as_deref(),
-        region_code: args.region_code.as_deref(),
-        message_category: args.message_category.as_deref(),
-    };
-
-    let delivery = client
-        .whatsapp_delivery_analytics(&config.auth.access_token, &request)
-        .await?
-        .data
-        .unwrap_or(serde_json::Value::Null);
-    let message_detail = client
-        .whatsapp_message_detail(&config.auth.access_token, &request)
-        .await?
-        .data
-        .unwrap_or(serde_json::Value::Null);
-    let failure_reason_share = client
-        .whatsapp_failure_reason_share(&config.auth.access_token, &request)
-        .await?
-        .data
-        .unwrap_or(serde_json::Value::Null);
-
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&serde_json::json!({
-            "range": {
-                "startTime": range.start_time,
-                "endTime": range.end_time,
-                "timezone": args.timezone,
-            },
-            "deliveryAnalytics": delivery,
-            "messageDetail": message_detail,
-            "failureReasonShare": failure_reason_share,
-        }))?
-    );
-    Ok(())
-}
-
 pub async fn analytics_logs(
     client: &DashboardClient,
     config_path: &Path,
@@ -595,6 +547,9 @@ mod tests {
             "GET {target} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
         )
         .expect("write callback request");
+        browser
+            .shutdown(std::net::Shutdown::Write)
+            .expect("finish callback request");
 
         let result = handle_callback(&mut callback, expected_state);
         drop(callback);

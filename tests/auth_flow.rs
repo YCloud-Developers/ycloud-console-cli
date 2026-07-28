@@ -264,47 +264,72 @@ async fn analytics_overview_calls_stable_v1_endpoints() {
     let expected_body = serde_json::json!({
         "startTime": "2026-07-01T16:00:00.000Z",
         "endTime": "2026-07-08T16:00:00.000Z",
-        "timezone": "GMT+8",
-        "from": "8613800138000",
-        "regionCode": "CN",
-        "messageCategory": "marketing,utility"
+        "timezone": "Asia/Shanghai",
+        "froms": ["8613800138000"],
+        "regionCodes": ["CN"],
+        "messageTypes": ["marketing", "utility"],
+        "wabaIds": ["waba-1"]
     });
-    for endpoint in [
-        "/api/cli/v1/whatsapp/analytics/delivery",
-        "/api/cli/v1/whatsapp/analytics/message-detail",
-        "/api/cli/v1/whatsapp/analytics/failure-reasons",
-    ] {
-        Mock::given(method("POST"))
-            .and(path(endpoint))
-            .and(header("authorization", "Bearer YCLI.access"))
-            .and(body_json(expected_body.clone()))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "code": 0,
-                "data": {
-                    "endpoint": endpoint
-                }
-            })))
-            .mount(&server)
-            .await;
-    }
+    Mock::given(method("POST"))
+        .and(path("/api/cli/v1/whatsapp/analytics/delivery"))
+        .and(header("authorization", "Bearer YCLI.access"))
+        .and(body_json(expected_body.clone()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0, "data": {"messageTypes": []}
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/cli/v1/whatsapp/analytics/message-detail"))
+        .and(header("authorization", "Bearer YCLI.access"))
+        .and(body_json(expected_body.clone()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "data": {"timezone": "Asia/Shanghai", "granularity": "DAY", "buckets": []}
+        })))
+        .mount(&server)
+        .await;
+    let mut template_body = expected_body.as_object().unwrap().clone();
+    template_body.insert("pageNo".to_string(), serde_json::json!(1));
+    template_body.insert("pageSize".to_string(), serde_json::json!(10));
+    template_body.insert("sortField".to_string(), serde_json::json!("total"));
+    template_body.insert("sortDirection".to_string(), serde_json::json!("DESC"));
+    Mock::given(method("POST"))
+        .and(path("/api/cli/v1/whatsapp/analytics/templates/search"))
+        .and(header("authorization", "Bearer YCLI.access"))
+        .and(body_json(serde_json::Value::Object(template_body)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "data": {"pageNo": 1, "pageSize": 10, "totalElements": 0, "records": []}
+        })))
+        .mount(&server)
+        .await;
 
     let tmp = tempfile::tempdir().unwrap();
     let config_path = tmp.path().join("config.toml");
     saved_config(server.uri()).save(&config_path).unwrap();
 
     let client = DashboardClient::new(server.uri()).unwrap();
-    ycloud_console_cli::auth::analytics_overview(
+    ycloud_console_cli::analytics::overview(
         &client,
         &config_path,
-        ycloud_console_cli::cli::AnalyticsOverviewArgs {
-            range: ycloud_console_cli::cli::AnalyticsRangeArgs {
-                start_time: Some(1782921600000),
-                end_time: Some(1783526400000),
+        ycloud_console_cli::cli::AnalyticsQueryArgs {
+            filter: ycloud_console_cli::cli::AnalyticsFilterArgs {
+                range: ycloud_console_cli::cli::AnalyticsRangeArgs {
+                    start_time: Some(1782921600000),
+                    end_time: Some(1783526400000),
+                },
+                preset: None,
+                timezone: "Asia/Shanghai".to_string(),
+                froms: vec!["8613800138000".to_string()],
+                region_codes: vec!["CN".to_string()],
+                message_types: vec![
+                    ycloud_console_cli::cli::AnalyticsMessageType::Marketing,
+                    ycloud_console_cli::cli::AnalyticsMessageType::Utility,
+                ],
+                waba_ids: vec!["waba-1".to_string()],
             },
-            timezone: "GMT+8".to_string(),
-            from: Some("8613800138000".to_string()),
-            region_code: Some("CN".to_string()),
-            message_category: Some("marketing,utility".to_string()),
+            json: true,
         },
     )
     .await
@@ -699,11 +724,12 @@ async fn analytics_v1_serializes_rfc3339_and_iana_timezone() {
             "startTime": "1970-01-01T00:00:00.000Z",
             "endTime": "1970-01-01T00:00:01.000Z",
             "timezone": "UTC",
-            "regionCode": "US",
-            "messageCategory": "utility"
+            "regionCodes": ["US"],
+            "messageTypes": ["utility"],
+            "wabaIds": ["waba-1"]
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "code": 0, "msg": "OK", "data": {"dataPoints": []}, "error": null,
+            "code": 0, "msg": "OK", "data": {"messageTypes": []}, "error": null,
             "requestId": "req-analytics", "traceId": "trace-analytics", "warnings": []
         })))
         .expect(1)
@@ -717,13 +743,14 @@ async fn analytics_v1_serializes_rfc3339_and_iana_timezone() {
         .await;
 
     let client = DashboardClient::new(server.uri()).unwrap();
-    let request = ycloud_console_cli::http::AnalyticsOverviewRequest {
-        start_time: 0,
-        end_time: 1000,
-        timezone: "UTC",
-        from: None,
-        region_code: Some("US"),
-        message_category: Some("utility"),
+    let request = ycloud_console_cli::http::AnalyticsRequest {
+        start_time: "1970-01-01T00:00:00.000Z".to_string(),
+        end_time: "1970-01-01T00:00:01.000Z".to_string(),
+        timezone: "UTC".to_string(),
+        froms: Vec::new(),
+        region_codes: vec!["US".to_string()],
+        message_types: vec!["utility".to_string()],
+        waba_ids: vec!["waba-1".to_string()],
     };
 
     client

@@ -85,6 +85,14 @@ impl DashboardClient {
         Self::build(base_url, invocation_mode, invocation_mode.overall_timeout())
     }
 
+    pub fn new_with_mode_and_timeout(
+        base_url: String,
+        invocation_mode: InvocationMode,
+        timeout: Duration,
+    ) -> Result<Self> {
+        Self::build(base_url, invocation_mode, timeout)
+    }
+
     fn build(base_url: String, invocation_mode: InvocationMode, timeout: Duration) -> Result<Self> {
         let mut parsed = Url::parse(&base_url).context("dashboard url must be absolute")?;
         if parsed.path() == "/" {
@@ -220,13 +228,12 @@ impl DashboardClient {
     pub async fn whatsapp_delivery_analytics(
         &self,
         access_token: &str,
-        request: &AnalyticsOverviewRequest<'_>,
-    ) -> Result<ApiEnvelope<serde_json::Value>> {
-        let stable = AnalyticsV1Request::try_from(*request)?;
+        request: &AnalyticsRequest,
+    ) -> Result<ApiEnvelope<AnalyticsSummary>> {
         self.post_json_safe(
             "/api/cli/v1/whatsapp/analytics/delivery",
             Some(access_token),
-            &stable,
+            request,
         )
         .await
     }
@@ -234,27 +241,40 @@ impl DashboardClient {
     pub async fn whatsapp_message_detail(
         &self,
         access_token: &str,
-        request: &AnalyticsOverviewRequest<'_>,
-    ) -> Result<ApiEnvelope<serde_json::Value>> {
-        let stable = AnalyticsV1Request::try_from(*request)?;
+        request: &AnalyticsRequest,
+    ) -> Result<ApiEnvelope<AnalyticsTrend>> {
         self.post_json_safe(
             "/api/cli/v1/whatsapp/analytics/message-detail",
             Some(access_token),
-            &stable,
+            request,
         )
         .await
     }
 
-    pub async fn whatsapp_failure_reason_share(
+    pub async fn whatsapp_template_statistics(
         &self,
         access_token: &str,
-        request: &AnalyticsOverviewRequest<'_>,
-    ) -> Result<ApiEnvelope<serde_json::Value>> {
-        let stable = AnalyticsV1Request::try_from(*request)?;
+        request: &AnalyticsTemplateSearchRequest,
+    ) -> Result<ApiEnvelope<AnalyticsTemplatePage>> {
         self.post_json_safe(
-            "/api/cli/v1/whatsapp/analytics/failure-reasons",
+            "/api/cli/v1/whatsapp/analytics/templates/search",
             Some(access_token),
-            &stable,
+            request,
+        )
+        .await
+    }
+
+    pub async fn create_template_statistics_export(
+        &self,
+        access_token: &str,
+        idempotency_key: &str,
+        request: &AnalyticsTemplateExportRequest,
+    ) -> Result<ApiEnvelope<ExportTask>> {
+        self.post_json_idempotent(
+            "/api/cli/v1/whatsapp/analytics/template-exports",
+            access_token,
+            idempotency_key,
+            request,
         )
         .await
     }
@@ -590,7 +610,7 @@ impl DashboardClient {
     }
 }
 
-fn millis_to_rfc3339(value: i64) -> Result<String> {
+pub(crate) fn millis_to_rfc3339(value: i64) -> Result<String> {
     chrono::DateTime::from_timestamp_millis(value)
         .map(|date_time| date_time.to_rfc3339_opts(SecondsFormat::Millis, true))
         .with_context(|| format!("analytics time is outside the RFC 3339 range: {value}"))
@@ -693,6 +713,14 @@ impl DashboardApiError {
 
     pub fn trace_id(&self) -> Option<&str> {
         self.trace_id.as_deref()
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    pub fn retryable(&self) -> bool {
+        self.retryable
     }
 
     fn into_error(self) -> anyhow::Error {
@@ -1043,49 +1071,120 @@ pub struct AnalyticsRangeRequest {
     pub end_time: i64,
 }
 
-#[derive(Debug, Serialize, Copy, Clone)]
-pub struct AnalyticsOverviewRequest<'a> {
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsRequest {
     #[serde(rename = "startTime")]
+    pub start_time: String,
+    #[serde(rename = "endTime")]
+    pub end_time: String,
+    pub timezone: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub froms: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub region_codes: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub message_types: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub waba_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsMetric {
+    pub message_type: String,
+    pub total: Option<u64>,
+    pub delivered: Option<u64>,
+    pub failed: Option<u64>,
+    pub processing: Option<u64>,
+    pub delivery_rate: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsSummary {
+    #[serde(default)]
+    pub message_types: Vec<AnalyticsMetric>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsTrendBucket {
     pub start_time: i64,
-    #[serde(rename = "endTime")]
     pub end_time: i64,
-    pub timezone: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub from: Option<&'a str>,
-    #[serde(rename = "regionCode", skip_serializing_if = "Option::is_none")]
-    pub region_code: Option<&'a str>,
-    #[serde(rename = "messageCategory", skip_serializing_if = "Option::is_none")]
-    pub message_category: Option<&'a str>,
+    pub total: Option<u64>,
+    pub delivered: Option<u64>,
+    pub failed: Option<u64>,
+    pub processing: Option<u64>,
+    pub delivery_rate: Option<f64>,
+    #[serde(default)]
+    pub message_types: Vec<AnalyticsMetric>,
 }
 
-#[derive(Debug, Serialize)]
-struct AnalyticsV1Request<'a> {
-    #[serde(rename = "startTime")]
-    start_time: String,
-    #[serde(rename = "endTime")]
-    end_time: String,
-    timezone: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    from: Option<&'a str>,
-    #[serde(rename = "regionCode", skip_serializing_if = "Option::is_none")]
-    region_code: Option<&'a str>,
-    #[serde(rename = "messageCategory", skip_serializing_if = "Option::is_none")]
-    message_category: Option<&'a str>,
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsTrend {
+    pub timezone: String,
+    pub granularity: Option<String>,
+    #[serde(default)]
+    pub buckets: Vec<AnalyticsTrendBucket>,
 }
 
-impl<'a> TryFrom<AnalyticsOverviewRequest<'a>> for AnalyticsV1Request<'a> {
-    type Error = anyhow::Error;
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsTemplateSearchRequest {
+    #[serde(flatten)]
+    pub analytics: AnalyticsRequest,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template_name: Option<String>,
+    pub page_no: u32,
+    pub page_size: u32,
+    pub sort_field: String,
+    pub sort_direction: String,
+}
 
-    fn try_from(request: AnalyticsOverviewRequest<'a>) -> Result<Self> {
-        Ok(Self {
-            start_time: millis_to_rfc3339(request.start_time)?,
-            end_time: millis_to_rfc3339(request.end_time)?,
-            timezone: request.timezone,
-            from: request.from,
-            region_code: request.region_code,
-            message_category: request.message_category,
-        })
-    }
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsTemplateExportRequest {
+    #[serde(flatten)]
+    pub analytics: AnalyticsRequest,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template_name: Option<String>,
+    pub sort_field: String,
+    pub sort_direction: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsFailureReason {
+    pub error_code: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsTemplateRecord {
+    pub waba_id: Option<String>,
+    pub template_name: String,
+    pub language_code: Option<String>,
+    pub category: Option<String>,
+    pub total: Option<u64>,
+    pub delivered: Option<u64>,
+    pub failed: Option<u64>,
+    pub delivery_rate: Option<f64>,
+    pub top_failure_reason: Option<AnalyticsFailureReason>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsTemplatePage {
+    pub page_no: u32,
+    pub page_size: u32,
+    pub total_elements: u64,
+    #[serde(default)]
+    pub records: Vec<AnalyticsTemplateRecord>,
 }
 
 #[derive(Debug, Serialize)]
