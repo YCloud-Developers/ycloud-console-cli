@@ -10,17 +10,18 @@ use std::{
 
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use chrono::DateTime;
 use url::Url;
 
 use crate::{
     cli::{
-        AnalyticsCallingLogsArgs, AnalyticsLogsArgs, AnalyticsOverviewArgs, AnalyticsRangeArgs,
+        AnalyticsCallingLogsArgs, AnalyticsLogsArgs, AnalyticsRangeArgs, ContactStatsArgs,
         ContactsListArgs, LoginArgs, PermissionProfile,
     },
     config::{self, AuthConfig, Config, DashboardConfig},
     http::{
-        AnalyticsCallingLogsRequest, AnalyticsLogsRequest, AnalyticsOverviewRequest,
-        AnalyticsRangeRequest, ContactsSearchRequest, DashboardClient, TokenData,
+        AnalyticsCallingLogsRequest, AnalyticsLogsRequest, AnalyticsRangeRequest,
+        ContactStatisticsRequest, ContactsSearchRequest, DashboardClient, TokenData,
     },
     pkce,
 };
@@ -315,6 +316,39 @@ pub async fn contacts_list(
     Ok(())
 }
 
+pub async fn contact_statistics(
+    client: &DashboardClient,
+    config_path: &Path,
+    args: ContactStatsArgs,
+) -> Result<()> {
+    let start = DateTime::parse_from_rfc3339(&args.start_time)
+        .context("start-time must use RFC 3339 date-time format")?;
+    let end = DateTime::parse_from_rfc3339(&args.end_time)
+        .context("end-time must use RFC 3339 date-time format")?;
+    if start >= end {
+        anyhow::bail!("start-time must be earlier than end-time");
+    }
+    if end.signed_duration_since(start).num_milliseconds() > 90 * 24 * 60 * 60 * 1_000 {
+        anyhow::bail!("contact statistics time range must not exceed 90 days");
+    }
+
+    let config = Config::load(config_path)?;
+    let statistics = client
+        .contact_statistics(
+            &config.auth.access_token,
+            ContactStatisticsRequest {
+                start_time: &args.start_time,
+                end_time: &args.end_time,
+                sources: &args.sources,
+                group_by: args.group_by.map(|value| value.as_api_value()),
+            },
+        )
+        .await?
+        .require_data("contacts/statistics")?;
+    println!("{}", serde_json::to_string_pretty(&statistics)?);
+    Ok(())
+}
+
 pub async fn contacts_metadata(client: &DashboardClient, config_path: &Path) -> Result<()> {
     let config = Config::load(config_path)?;
     let metadata = client
@@ -348,54 +382,6 @@ pub async fn analytics_outline(
         .data
         .unwrap_or_else(|| serde_json::json!({}));
     println!("{}", serde_json::to_string_pretty(&outline)?);
-    Ok(())
-}
-
-pub async fn analytics_overview(
-    client: &DashboardClient,
-    config_path: &Path,
-    args: AnalyticsOverviewArgs,
-) -> Result<()> {
-    let config = Config::load(config_path)?;
-    let range = analytics_range(&args.range)?;
-    let request = AnalyticsOverviewRequest {
-        start_time: range.start_time,
-        end_time: range.end_time,
-        timezone: &args.timezone,
-        from: args.from.as_deref(),
-        region_code: args.region_code.as_deref(),
-        message_category: args.message_category.as_deref(),
-    };
-
-    let delivery = client
-        .whatsapp_delivery_analytics(&config.auth.access_token, &request)
-        .await?
-        .data
-        .unwrap_or(serde_json::Value::Null);
-    let message_detail = client
-        .whatsapp_message_detail(&config.auth.access_token, &request)
-        .await?
-        .data
-        .unwrap_or(serde_json::Value::Null);
-    let failure_reason_share = client
-        .whatsapp_failure_reason_share(&config.auth.access_token, &request)
-        .await?
-        .data
-        .unwrap_or(serde_json::Value::Null);
-
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&serde_json::json!({
-            "range": {
-                "startTime": range.start_time,
-                "endTime": range.end_time,
-                "timezone": args.timezone,
-            },
-            "deliveryAnalytics": delivery,
-            "messageDetail": message_detail,
-            "failureReasonShare": failure_reason_share,
-        }))?
-    );
     Ok(())
 }
 
@@ -595,6 +581,9 @@ mod tests {
             "GET {target} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
         )
         .expect("write callback request");
+        browser
+            .shutdown(std::net::Shutdown::Write)
+            .expect("finish callback request");
 
         let result = handle_callback(&mut callback, expected_state);
         drop(callback);

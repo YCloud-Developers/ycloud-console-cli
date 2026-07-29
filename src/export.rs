@@ -9,12 +9,37 @@ use serde_json::{json, Map, Value};
 
 use crate::{
     cli::{
-        ContactExportArgs, ConversationExportArgs, ConversationFilterArgs, ConversationSearchArgs,
-        ExportArtifactType, ExportDownloadArgs, ExportRetryArgs, ExportTaskArgs, ExportWaitArgs,
+        AnalyticsTemplatesExportArgs, ContactExportArgs, ConversationExportArgs,
+        ConversationFilterArgs, ConversationSearchArgs, ExportArtifactType, ExportDownloadArgs,
+        ExportRetryArgs, ExportTaskArgs, ExportWaitArgs,
     },
     config::Config,
-    http::{DashboardClient, ExportTask},
+    http::{AnalyticsTemplateExportRequest, DashboardClient, ExportTask},
 };
+
+pub async fn export_template_statistics(
+    client: &DashboardClient,
+    config_path: &Path,
+    args: AnalyticsTemplatesExportArgs,
+) -> Result<()> {
+    let config = Config::load(config_path)?;
+    let idempotency_key = args
+        .idempotency_key
+        .clone()
+        .unwrap_or_else(new_idempotency_key);
+    let request = AnalyticsTemplateExportRequest {
+        analytics: crate::analytics::request(&args.filter)?,
+        template_name: args.template_name,
+        sort_field: args.sort_field.as_api_value().to_string(),
+        sort_direction: args.sort_direction.as_api_value().to_string(),
+        file_name: args.file_name,
+    };
+    let task = client
+        .create_template_statistics_export(&config.auth.access_token, &idempotency_key, &request)
+        .await?
+        .require_data("template statistics export")?;
+    finish_created_task(client, &config, task, args.wait).await
+}
 
 pub async fn search_conversations(
     client: &DashboardClient,

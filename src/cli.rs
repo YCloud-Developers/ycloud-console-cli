@@ -60,7 +60,7 @@ pub enum Command {
     Login(LoginArgs),
     #[command(about = "Show the current Dashboard CLI identity and granted permissions")]
     Whoami,
-    #[command(about = "Query Dashboard analytics data used by /app/dashboard/analytics")]
+    #[command(about = "Query operational Dashboard analytics; not for billing reconciliation")]
     Analytics {
         #[command(subcommand)]
         command: AnalyticsCommand,
@@ -110,8 +110,15 @@ pub enum TenantsCommand {
 pub enum AnalyticsCommand {
     #[command(about = "List analytics filter options for the selected time range")]
     Outline(AnalyticsRangeArgs),
-    #[command(about = "Fetch delivery, message detail, and failure reason analytics")]
-    Overview(AnalyticsOverviewArgs),
+    #[command(about = "Show message-type summary, volume trend, and template statistics")]
+    Overview(AnalyticsQueryArgs),
+    #[command(about = "Show daily or weekly WhatsApp message volume trend")]
+    Trend(AnalyticsQueryArgs),
+    #[command(about = "List or export WhatsApp template statistics")]
+    Templates {
+        #[command(subcommand)]
+        command: AnalyticsTemplatesCommand,
+    },
     #[command(about = "Search WhatsApp message logs from Dashboard analytics")]
     Logs(AnalyticsLogsArgs),
     #[command(about = "Search Calling logs from Dashboard analytics")]
@@ -178,10 +185,43 @@ impl std::fmt::Display for PermissionProfile {
 #[derive(Debug, Subcommand, Clone)]
 pub enum ContactsCommand {
     List(ContactsListArgs),
+    #[command(about = "Count contacts created in a time range, optionally grouped by source")]
+    Stats(ContactStatsArgs),
     #[command(about = "List contact sources, tags, segments, and segment filters")]
     Metadata,
     #[command(about = "Export contacts asynchronously")]
     Export(ContactExportArgs),
+}
+
+#[derive(Debug, ValueEnum, Clone, Copy, PartialEq, Eq)]
+pub enum ContactGroupBy {
+    Source,
+}
+
+impl ContactGroupBy {
+    pub fn as_api_value(self) -> &'static str {
+        match self {
+            Self::Source => "SOURCE",
+        }
+    }
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct ContactStatsArgs {
+    #[arg(long, help = "Inclusive RFC 3339 start time")]
+    pub start_time: String,
+
+    #[arg(long, help = "Exclusive RFC 3339 end time")]
+    pub end_time: String,
+
+    #[arg(
+        long = "source",
+        help = "Contact source filter; repeat for multiple sources"
+    )]
+    pub sources: Vec<String>,
+
+    #[arg(long, value_enum, help = "Aggregation dimension")]
+    pub group_by: Option<ContactGroupBy>,
 }
 
 #[derive(Debug, Subcommand, Clone)]
@@ -261,6 +301,7 @@ pub enum ExportArtifactType {
     Conversations,
     Contacts,
     Messages,
+    TemplateStatistics,
     Manifest,
     Archive,
 }
@@ -271,6 +312,7 @@ impl ExportArtifactType {
             Self::Conversations => "CONVERSATIONS",
             Self::Contacts => "CONTACTS",
             Self::Messages => "MESSAGES",
+            Self::TemplateStatistics => "TEMPLATE_STATISTICS",
             Self::Manifest => "MANIFEST",
             Self::Archive => "ARCHIVE",
         }
@@ -447,9 +489,12 @@ pub struct AnalyticsRangeArgs {
 }
 
 #[derive(Debug, Args, Clone)]
-pub struct AnalyticsOverviewArgs {
+pub struct AnalyticsFilterArgs {
     #[command(flatten)]
     pub range: AnalyticsRangeArgs,
+
+    #[arg(long, value_enum, help = "Use a trailing 7, 30, 60, or 90 day preset")]
+    pub preset: Option<AnalyticsPreset>,
 
     #[arg(
         long,
@@ -459,19 +504,164 @@ pub struct AnalyticsOverviewArgs {
     pub timezone: String,
 
     #[arg(
-        long,
-        help = "WhatsApp business phone number, for example 8613800138000"
+        long = "from",
+        help = "WhatsApp business phone number; may be repeated"
     )]
-    pub from: Option<String>,
-
-    #[arg(long, help = "ISO country or region code, for example CN")]
-    pub region_code: Option<String>,
+    pub froms: Vec<String>,
 
     #[arg(
-        long,
-        help = "Comma-separated message categories, for example marketing,utility"
+        long = "region-code",
+        help = "ISO country or region code; may be repeated"
     )]
-    pub message_category: Option<String>,
+    pub region_codes: Vec<String>,
+
+    #[arg(
+        long = "message-type",
+        value_enum,
+        help = "Message type; may be repeated"
+    )]
+    pub message_types: Vec<AnalyticsMessageType>,
+
+    #[arg(
+        long = "waba-id",
+        help = "WhatsApp Business Account ID; may be repeated"
+    )]
+    pub waba_ids: Vec<String>,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct AnalyticsQueryArgs {
+    #[command(flatten)]
+    pub filter: AnalyticsFilterArgs,
+    #[arg(long, help = "Print stable machine-readable JSON")]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum AnalyticsPreset {
+    #[value(name = "last-7-days")]
+    Last7Days,
+    #[value(name = "last-30-days")]
+    Last30Days,
+    #[value(name = "last-60-days")]
+    Last60Days,
+    #[value(name = "last-90-days")]
+    Last90Days,
+}
+
+impl AnalyticsPreset {
+    pub fn days(self) -> i64 {
+        match self {
+            Self::Last7Days => 7,
+            Self::Last30Days => 30,
+            Self::Last60Days => 60,
+            Self::Last90Days => 90,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum AnalyticsMessageType {
+    Authentication,
+    AuthenticationInternational,
+    Utility,
+    Marketing,
+    MarketingLite,
+    Service,
+}
+
+impl AnalyticsMessageType {
+    pub fn as_api_value(self) -> &'static str {
+        match self {
+            Self::Authentication => "authentication",
+            Self::AuthenticationInternational => "authentication_international",
+            Self::Utility => "utility",
+            Self::Marketing => "marketing",
+            Self::MarketingLite => "marketing_lite",
+            Self::Service => "service",
+        }
+    }
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum AnalyticsTemplatesCommand {
+    #[command(about = "List one page of template statistics")]
+    List(AnalyticsTemplatesListArgs),
+    #[command(about = "Export all matching template statistics asynchronously")]
+    Export(AnalyticsTemplatesExportArgs),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum AnalyticsTemplateSortField {
+    Total,
+    Delivered,
+    Failed,
+    DeliveryRate,
+    TemplateName,
+}
+
+impl AnalyticsTemplateSortField {
+    pub fn as_api_value(self) -> &'static str {
+        match self {
+            Self::Total => "total",
+            Self::Delivered => "delivered",
+            Self::Failed => "failed",
+            Self::DeliveryRate => "deliveryRate",
+            Self::TemplateName => "templateName",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum SortDirection {
+    Asc,
+    Desc,
+}
+
+impl SortDirection {
+    pub fn as_api_value(self) -> &'static str {
+        match self {
+            Self::Asc => "ASC",
+            Self::Desc => "DESC",
+        }
+    }
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct AnalyticsTemplatesListArgs {
+    #[command(flatten)]
+    pub filter: AnalyticsFilterArgs,
+    #[arg(long)]
+    pub template_name: Option<String>,
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+    pub page_no: u32,
+    #[arg(long, value_enum, default_value_t = AnalyticsTemplateSortField::Total)]
+    pub sort_field: AnalyticsTemplateSortField,
+    #[arg(long, value_enum, default_value_t = SortDirection::Desc)]
+    pub sort_direction: SortDirection,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct AnalyticsTemplatesExportArgs {
+    #[command(flatten)]
+    pub filter: AnalyticsFilterArgs,
+    #[arg(long)]
+    pub template_name: Option<String>,
+    #[arg(long, value_enum, default_value_t = AnalyticsTemplateSortField::Total)]
+    pub sort_field: AnalyticsTemplateSortField,
+    #[arg(long, value_enum, default_value_t = SortDirection::Desc)]
+    pub sort_direction: SortDirection,
+    #[arg(long)]
+    pub file_name: Option<String>,
+    #[arg(
+        long,
+        help = "Reuse this key to recover safely from an uncertain create response"
+    )]
+    pub idempotency_key: Option<String>,
+    #[command(flatten)]
+    pub wait: ExportWaitArgs,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -699,5 +889,49 @@ mod tests {
         assert_eq!(args.format, ExportFormat::Csv);
         assert_eq!(args.wait.artifacts.len(), 2);
         assert_eq!(args.idempotency_key.as_deref(), Some("contact-export-1"));
+    }
+
+    #[test]
+    fn analytics_overview_accepts_repeatable_new_filters() {
+        let cli = Cli::try_parse_from([
+            "ycloud",
+            "analytics",
+            "overview",
+            "--preset",
+            "last-30-days",
+            "--message-type",
+            "utility",
+            "--message-type",
+            "marketing-lite",
+            "--waba-id",
+            "waba-1",
+            "--waba-id",
+            "waba-2",
+            "--json",
+        ])
+        .unwrap();
+
+        let Command::Analytics {
+            command: AnalyticsCommand::Overview(args),
+        } = cli.command
+        else {
+            panic!("expected analytics overview");
+        };
+        assert_eq!(args.filter.preset, Some(AnalyticsPreset::Last30Days));
+        assert_eq!(args.filter.message_types.len(), 2);
+        assert_eq!(args.filter.waba_ids, ["waba-1", "waba-2"]);
+        assert!(args.json);
+    }
+
+    #[test]
+    fn analytics_overview_rejects_removed_message_category_flag() {
+        assert!(Cli::try_parse_from([
+            "ycloud",
+            "analytics",
+            "overview",
+            "--message-category",
+            "utility,marketing",
+        ])
+        .is_err());
     }
 }

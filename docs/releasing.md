@@ -28,14 +28,24 @@ The npm packages are public, but npm provenance attestations are unavailable bec
 
 Keep all versions equal in `Cargo.toml`, the root `package.json`, and every package under `npm/`.
 
+### 0.2.0 analytics cutover
+
+Version `0.2.0` replaces the previous analytics overview interface. Release notes must call out that:
+
+- `analytics overview`, `analytics trend`, and `analytics templates list|export` use the stable CLI v1 analytics contract.
+- Analytics ranges are limited to 90 natural days; ranges up to 30 days use daily buckets and longer ranges use weekly buckets.
+- `--message-type` is repeatable. The old comma-separated `--message-category` form is removed.
+- Table output is the default; `--json` is the machine-readable option. There is no `--output table|json` compatibility flag.
+- Template statistics exports use the existing asynchronous export task, wait, and download lifecycle.
+
 ```bash
 npm run check:release
 cargo fmt -- --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 npm run test:npm
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 The workflow builds native binaries on GitHub-hosted macOS and Linux runners, creates a private-repository GitHub Release for maintainers, publishes the npm packages, and updates the public Homebrew tap from the native npm tarballs.

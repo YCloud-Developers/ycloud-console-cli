@@ -1,3 +1,4 @@
+pub mod analytics;
 pub mod auth;
 pub mod cli;
 pub mod config;
@@ -13,9 +14,9 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{
-    AnalyticsCommand, Cli, Command, ContactsCommand, ExportsCommand, InboxCommand,
-    InboxConversationsCommand, IntegrationsCommand, TenantsCommand, WabaAssignmentCommand,
-    WhatsappCommand, DEFAULT_DASHBOARD_URL,
+    AnalyticsCommand, AnalyticsTemplatesCommand, Cli, Command, ContactsCommand, ExportsCommand,
+    InboxCommand, InboxConversationsCommand, IntegrationsCommand, TenantsCommand,
+    WabaAssignmentCommand, WhatsappCommand, DEFAULT_DASHBOARD_URL,
 };
 use config::Config;
 use http::{DashboardApiError, InvocationMode};
@@ -112,14 +113,35 @@ async fn execute_once(
             auth::whoami(&client, config_path).await
         }
         Command::Analytics { command } => {
-            let client = saved_client(cli, config_path, invocation_mode)?;
+            let client = match command {
+                AnalyticsCommand::Overview(_)
+                | AnalyticsCommand::Trend(_)
+                | AnalyticsCommand::Templates { .. } => saved_client_with_timeout(
+                    cli,
+                    config_path,
+                    invocation_mode,
+                    std::time::Duration::from_secs(30),
+                )?,
+                _ => saved_client(cli, config_path, invocation_mode)?,
+            };
             match command {
                 AnalyticsCommand::Outline(args) => {
                     auth::analytics_outline(&client, config_path, args.clone()).await
                 }
                 AnalyticsCommand::Overview(args) => {
-                    auth::analytics_overview(&client, config_path, args.clone()).await
+                    analytics::overview(&client, config_path, args.clone()).await
                 }
+                AnalyticsCommand::Trend(args) => {
+                    analytics::trend(&client, config_path, args.clone()).await
+                }
+                AnalyticsCommand::Templates { command } => match command {
+                    AnalyticsTemplatesCommand::List(args) => {
+                        analytics::templates_list(&client, config_path, args.clone()).await
+                    }
+                    AnalyticsTemplatesCommand::Export(args) => {
+                        export::export_template_statistics(&client, config_path, args.clone()).await
+                    }
+                },
                 AnalyticsCommand::Logs(args) => {
                     auth::analytics_logs(&client, config_path, args.clone()).await
                 }
@@ -133,6 +155,9 @@ async fn execute_once(
             match command {
                 ContactsCommand::List(args) => {
                     auth::contacts_list(&client, config_path, args.clone()).await
+                }
+                ContactsCommand::Stats(args) => {
+                    auth::contact_statistics(&client, config_path, args.clone()).await
                 }
                 ContactsCommand::Metadata => auth::contacts_metadata(&client, config_path).await,
                 ContactsCommand::Export(args) => {
@@ -208,6 +233,19 @@ fn saved_client(
     client_for_saved_profile(cli.dashboard_url.clone(), config_path, invocation_mode)
 }
 
+fn saved_client_with_timeout(
+    cli: &Cli,
+    config_path: &Path,
+    invocation_mode: InvocationMode,
+    timeout: std::time::Duration,
+) -> Result<http::DashboardClient> {
+    let dashboard_url = match cli.dashboard_url.clone() {
+        Some(url) => url,
+        None => Config::load(config_path)?.dashboard.base_url,
+    };
+    http::DashboardClient::new_with_mode_and_timeout(dashboard_url, invocation_mode, timeout)
+}
+
 fn client_for_saved_profile(
     override_url: Option<String>,
     config_path: &Path,
@@ -233,6 +271,12 @@ fn preserve_idempotency_key(command: &mut Command) {
         } => &mut args.idempotency_key,
         Command::Exports {
             command: ExportsCommand::Retry(args),
+        } => &mut args.idempotency_key,
+        Command::Analytics {
+            command:
+                AnalyticsCommand::Templates {
+                    command: AnalyticsTemplatesCommand::Export(args),
+                },
         } => &mut args.idempotency_key,
         _ => return,
     };
@@ -298,5 +342,24 @@ mod tests {
 
         assert!(first.idempotency_key.is_some());
         assert_eq!(first.idempotency_key, second.idempotency_key);
+    }
+
+    #[test]
+    fn template_export_receives_generated_idempotency_key() {
+        let mut cli =
+            Cli::try_parse_from(["ycloud", "analytics", "templates", "export", "--no-wait"])
+                .unwrap();
+
+        preserve_idempotency_key(&mut cli.command);
+        let Command::Analytics {
+            command:
+                AnalyticsCommand::Templates {
+                    command: AnalyticsTemplatesCommand::Export(args),
+                },
+        } = cli.command
+        else {
+            panic!("expected template statistics export");
+        };
+        assert!(args.idempotency_key.is_some());
     }
 }

@@ -102,13 +102,20 @@ fn static_permissions(command: &Command) -> Vec<&'static str> {
             command: ContactsCommand::List(_),
         } => vec!["yc.contact.record.read"],
         Command::Contacts {
+            command: ContactsCommand::Stats(_),
+        } => vec!["yc.contact.record.read"],
+        Command::Contacts {
             command: ContactsCommand::Metadata,
         } => vec!["yc.contact.metadata.read"],
         Command::Contacts {
             command: ContactsCommand::Export(_),
         } => vec!["yc.contact.record.export"],
         Command::Analytics {
-            command: AnalyticsCommand::Outline(_) | AnalyticsCommand::Overview(_),
+            command:
+                AnalyticsCommand::Outline(_)
+                | AnalyticsCommand::Overview(_)
+                | AnalyticsCommand::Trend(_)
+                | AnalyticsCommand::Templates { .. },
         } => vec!["yc.whatsapp.analytics.read"],
         Command::Analytics {
             command: AnalyticsCommand::Logs(_),
