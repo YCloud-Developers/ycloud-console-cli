@@ -10,17 +10,18 @@ use std::{
 
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use chrono::DateTime;
 use url::Url;
 
 use crate::{
     cli::{
-        AnalyticsCallingLogsArgs, AnalyticsLogsArgs, AnalyticsRangeArgs, ContactsListArgs,
-        LoginArgs, PermissionProfile,
+        AnalyticsCallingLogsArgs, AnalyticsLogsArgs, AnalyticsRangeArgs, ContactStatsArgs,
+        ContactsListArgs, LoginArgs, PermissionProfile,
     },
     config::{self, AuthConfig, Config, DashboardConfig},
     http::{
         AnalyticsCallingLogsRequest, AnalyticsLogsRequest, AnalyticsRangeRequest,
-        ContactsSearchRequest, DashboardClient, TokenData,
+        ContactStatisticsRequest, ContactsSearchRequest, DashboardClient, TokenData,
     },
     pkce,
 };
@@ -312,6 +313,39 @@ pub async fn contacts_list(
         .await?
         .require_data("contacts/search")?;
     println!("{}", serde_json::to_string_pretty(&contacts)?);
+    Ok(())
+}
+
+pub async fn contact_statistics(
+    client: &DashboardClient,
+    config_path: &Path,
+    args: ContactStatsArgs,
+) -> Result<()> {
+    let start = DateTime::parse_from_rfc3339(&args.start_time)
+        .context("start-time must use RFC 3339 date-time format")?;
+    let end = DateTime::parse_from_rfc3339(&args.end_time)
+        .context("end-time must use RFC 3339 date-time format")?;
+    if start >= end {
+        anyhow::bail!("start-time must be earlier than end-time");
+    }
+    if end.signed_duration_since(start).num_milliseconds() > 90 * 24 * 60 * 60 * 1_000 {
+        anyhow::bail!("contact statistics time range must not exceed 90 days");
+    }
+
+    let config = Config::load(config_path)?;
+    let statistics = client
+        .contact_statistics(
+            &config.auth.access_token,
+            ContactStatisticsRequest {
+                start_time: &args.start_time,
+                end_time: &args.end_time,
+                sources: &args.sources,
+                group_by: args.group_by.map(|value| value.as_api_value()),
+            },
+        )
+        .await?
+        .require_data("contacts/statistics")?;
+    println!("{}", serde_json::to_string_pretty(&statistics)?);
     Ok(())
 }
 

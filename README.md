@@ -12,6 +12,7 @@
   conversations, ordered message JSONL parts, a sanitized manifest, and a separate contacts
   artifact by default.
 - `ycloud contacts export` provides the same artifact workflow for contact filters without first exporting conversations.
+- `ycloud contacts stats` counts newly created contacts for an RFC 3339 time range and can filter or group by Contact Source without paging through contact details.
 - `ycloud whatsapp waba-assignment list` automatically pages and joins the current WABA phone inventory, direct and team-expanded human assignments, and normalized routing rules. It never treats a partial backend failure as an unassigned phone.
 - `ycloud analytics overview`, `trend`, and `templates` use the stable WhatsApp analytics contract. The CLI sends RFC 3339 time values and an IANA timezone such as `Asia/Shanghai`.
 - Business commands use only the stable `/api/cli/v1/**` contract and never fall back to `/api/cli/read/**`. The legacy adapters remain server-side for CLI v0.1.3 compatibility.
@@ -66,6 +67,7 @@ ycloud whoami
 ycloud tenants list
 ycloud integrations status
 ycloud contacts metadata
+ycloud contacts stats --start-time 2026-06-28T00:00:00+08:00 --end-time 2026-07-28T00:00:00+08:00 --group-by source
 ycloud inbox conversations search --inbox-id inbox-1 --limit 100
 ycloud inbox conversations export --inbox-id inbox-1 --output-dir ./export
 ycloud contacts export --condition vip --format csv --output-dir ./export
@@ -106,6 +108,8 @@ ycloud analytics calling-logs --start-time 1782921600000 --end-time 178352640000
 ```
 
 Analytics is operational reporting and must not be used for billing reconciliation. `overview` requests the summary, trend, and first template page concurrently. It prints successful sections even if another section fails, then exits nonzero. Large template result sets use the existing asynchronous export lifecycle and produce `TEMPLATE_STATISTICS` plus manifest artifacts.
+
+Contact statistics accepts a maximum 90-day half-open range `[startTime,endTime)`. Repeat `--source` to filter several sources; combine it with `--group-by source` to group only the selected sources. The command always prints stable JSON. Campaign queries are not included in this release.
 
 ## Online Smoke
 

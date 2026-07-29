@@ -196,6 +196,19 @@ impl DashboardClient {
             .await
     }
 
+    pub async fn contact_statistics(
+        &self,
+        access_token: &str,
+        request: ContactStatisticsRequest<'_>,
+    ) -> Result<ApiEnvelope<ContactStatistics>> {
+        self.post_json_safe(
+            "/api/cli/v1/contacts/statistics",
+            Some(access_token),
+            &request,
+        )
+        .await
+    }
+
     pub async fn contacts_metadata(
         &self,
         access_token: &str,
@@ -1063,6 +1076,31 @@ pub struct ContactsSearchRequest<'a> {
     pub page_size: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub condition: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactStatisticsRequest<'a> {
+    pub start_time: &'a str,
+    pub end_time: &'a str,
+    pub sources: &'a [String],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_by: Option<&'a str>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactStatistics {
+    pub total: u64,
+    pub group_by: Option<String>,
+    #[serde(default)]
+    pub groups: Vec<ContactStatisticsGroup>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ContactStatisticsGroup {
+    pub key: String,
+    pub count: u64,
 }
 
 #[derive(Debug, Copy, Clone)]

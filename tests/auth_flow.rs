@@ -197,6 +197,111 @@ async fn contacts_list_calls_stable_v1_endpoint() {
 }
 
 #[tokio::test]
+async fn contact_statistics_calls_stable_v1_endpoint() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/cli/v1/contacts/statistics"))
+        .and(header("authorization", "Bearer YCLI.access"))
+        .and(body_json(serde_json::json!({
+            "startTime": "2026-06-28T00:00:00+08:00",
+            "endTime": "2026-07-28T00:00:00+08:00",
+            "sources": ["API added"],
+            "groupBy": "SOURCE"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "data": {
+                "total": 4105,
+                "groupBy": "SOURCE",
+                "groups": [{"key": "API added", "count": 4105}]
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    saved_config(server.uri()).save(&config_path).unwrap();
+
+    let client = DashboardClient::new(server.uri()).unwrap();
+    ycloud_console_cli::auth::contact_statistics(
+        &client,
+        &config_path,
+        ycloud_console_cli::cli::ContactStatsArgs {
+            start_time: "2026-06-28T00:00:00+08:00".to_string(),
+            end_time: "2026-07-28T00:00:00+08:00".to_string(),
+            sources: vec!["API added".to_string()],
+            group_by: Some(ycloud_console_cli::cli::ContactGroupBy::Source),
+        },
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn contact_statistics_rejects_invalid_range_before_loading_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    let client = DashboardClient::new("http://127.0.0.1:1".to_string()).unwrap();
+
+    let error = ycloud_console_cli::auth::contact_statistics(
+        &client,
+        &tmp.path().join("missing.toml"),
+        ycloud_console_cli::cli::ContactStatsArgs {
+            start_time: "2026-07-28T00:00:00Z".to_string(),
+            end_time: "2026-07-28T00:00:00Z".to_string(),
+            sources: Vec::new(),
+            group_by: None,
+        },
+    )
+    .await
+    .unwrap_err();
+
+    assert!(error.to_string().contains("earlier than end-time"));
+}
+
+#[tokio::test]
+async fn contact_statistics_rejects_more_than_ninety_days_before_loading_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    let client = DashboardClient::new("http://127.0.0.1:1".to_string()).unwrap();
+
+    let error = ycloud_console_cli::auth::contact_statistics(
+        &client,
+        &tmp.path().join("missing.toml"),
+        ycloud_console_cli::cli::ContactStatsArgs {
+            start_time: "2026-01-01T00:00:00Z".to_string(),
+            end_time: "2026-04-02T00:00:00Z".to_string(),
+            sources: Vec::new(),
+            group_by: None,
+        },
+    )
+    .await
+    .unwrap_err();
+
+    assert!(error.to_string().contains("90 days"));
+}
+
+#[tokio::test]
+async fn contact_statistics_rejects_non_rfc3339_time_before_loading_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    let client = DashboardClient::new("http://127.0.0.1:1".to_string()).unwrap();
+
+    let error = ycloud_console_cli::auth::contact_statistics(
+        &client,
+        &tmp.path().join("missing.toml"),
+        ycloud_console_cli::cli::ContactStatsArgs {
+            start_time: "2026-07-01".to_string(),
+            end_time: "2026-07-28T00:00:00Z".to_string(),
+            sources: Vec::new(),
+            group_by: None,
+        },
+    )
+    .await
+    .unwrap_err();
+
+    assert!(error.to_string().contains("RFC 3339"));
+}
+
+#[tokio::test]
 async fn contacts_metadata_calls_stable_v1_endpoint() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

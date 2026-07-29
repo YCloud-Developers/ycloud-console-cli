@@ -102,6 +102,9 @@ fn static_permissions(command: &Command) -> Vec<&'static str> {
             command: ContactsCommand::List(_),
         } => vec!["yc.contact.record.read"],
         Command::Contacts {
+            command: ContactsCommand::Stats(_),
+        } => vec!["yc.contact.record.read"],
+        Command::Contacts {
             command: ContactsCommand::Metadata,
         } => vec!["yc.contact.metadata.read"],
         Command::Contacts {

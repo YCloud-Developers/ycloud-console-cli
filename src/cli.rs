@@ -185,10 +185,43 @@ impl std::fmt::Display for PermissionProfile {
 #[derive(Debug, Subcommand, Clone)]
 pub enum ContactsCommand {
     List(ContactsListArgs),
+    #[command(about = "Count contacts created in a time range, optionally grouped by source")]
+    Stats(ContactStatsArgs),
     #[command(about = "List contact sources, tags, segments, and segment filters")]
     Metadata,
     #[command(about = "Export contacts asynchronously")]
     Export(ContactExportArgs),
+}
+
+#[derive(Debug, ValueEnum, Clone, Copy, PartialEq, Eq)]
+pub enum ContactGroupBy {
+    Source,
+}
+
+impl ContactGroupBy {
+    pub fn as_api_value(self) -> &'static str {
+        match self {
+            Self::Source => "SOURCE",
+        }
+    }
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct ContactStatsArgs {
+    #[arg(long, help = "Inclusive RFC 3339 start time")]
+    pub start_time: String,
+
+    #[arg(long, help = "Exclusive RFC 3339 end time")]
+    pub end_time: String,
+
+    #[arg(
+        long = "source",
+        help = "Contact source filter; repeat for multiple sources"
+    )]
+    pub sources: Vec<String>,
+
+    #[arg(long, value_enum, help = "Aggregation dimension")]
+    pub group_by: Option<ContactGroupBy>,
 }
 
 #[derive(Debug, Subcommand, Clone)]

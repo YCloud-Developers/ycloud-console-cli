@@ -156,6 +156,9 @@ async fn execute_once(
                 ContactsCommand::List(args) => {
                     auth::contacts_list(&client, config_path, args.clone()).await
                 }
+                ContactsCommand::Stats(args) => {
+                    auth::contact_statistics(&client, config_path, args.clone()).await
+                }
                 ContactsCommand::Metadata => auth::contacts_metadata(&client, config_path).await,
                 ContactsCommand::Export(args) => {
                     export::export_contacts(&client, config_path, args.clone()).await
