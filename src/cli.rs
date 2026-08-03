@@ -329,8 +329,13 @@ pub struct ConversationFilterArgs {
     pub conversation_tag_ids: Vec<String>,
     #[arg(long = "contact-tag-id", value_delimiter = ',')]
     pub contact_tag_ids: Vec<String>,
-    #[arg(long)]
-    pub status: Option<i32>,
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = ConversationStatus::All,
+        help = "Conversation status scope; legacy aliases 0=closed and 1=open are accepted"
+    )]
+    pub status: ConversationStatus,
     #[arg(long)]
     pub condition: Option<String>,
     #[arg(long)]
@@ -345,6 +350,32 @@ pub struct ConversationFilterArgs {
     pub csat: Option<i32>,
     #[arg(long)]
     pub customer: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum ConversationStatus {
+    #[default]
+    All,
+    #[value(alias = "1")]
+    Open,
+    #[value(alias = "0")]
+    Closed,
+}
+
+impl ConversationStatus {
+    pub fn as_api_value(self) -> &'static str {
+        match self {
+            Self::All => "ALL",
+            Self::Open => "OPEN",
+            Self::Closed => "CLOSED",
+        }
+    }
+}
+
+impl std::fmt::Display for ConversationStatus {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_api_value().to_ascii_lowercase().as_str())
+    }
 }
 
 #[derive(Debug, Args, Clone)]
@@ -854,6 +885,7 @@ mod tests {
             panic!("expected conversation export");
         };
         assert_eq!(args.filter.inbox_ids, ["inbox-1", "inbox-2"]);
+        assert_eq!(args.filter.status, ConversationStatus::All);
         assert!(!args.no_contacts);
         assert!(args.wait.no_wait);
         assert_eq!(args.format, ExportFormat::Auto);
@@ -861,6 +893,51 @@ mod tests {
             args.idempotency_key.as_deref(),
             Some("conversation-export-1")
         );
+    }
+
+    #[test]
+    fn parses_conversation_status_names_and_legacy_aliases() {
+        for (value, expected) in [
+            ("all", ConversationStatus::All),
+            ("open", ConversationStatus::Open),
+            ("closed", ConversationStatus::Closed),
+            ("1", ConversationStatus::Open),
+            ("0", ConversationStatus::Closed),
+        ] {
+            let cli = Cli::try_parse_from([
+                "ycloud",
+                "inbox",
+                "conversations",
+                "export",
+                "--status",
+                value,
+                "--no-wait",
+            ])
+            .unwrap();
+            let Command::Inbox {
+                command:
+                    InboxCommand::Conversations {
+                        command: InboxConversationsCommand::Export(args),
+                    },
+            } = cli.command
+            else {
+                panic!("expected conversation export");
+            };
+            assert_eq!(args.filter.status, expected);
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_conversation_status() {
+        assert!(Cli::try_parse_from([
+            "ycloud",
+            "inbox",
+            "conversations",
+            "search",
+            "--status",
+            "unknown",
+        ])
+        .is_err());
     }
 
     #[test]
