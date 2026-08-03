@@ -324,7 +324,7 @@ fn conversation_filter(args: &ConversationFilterArgs) -> Value {
         &args.conversation_tag_ids,
     );
     insert_vec(&mut filter, "contactTagIds", &args.contact_tag_ids);
-    insert_option(&mut filter, "status", args.status);
+    filter.insert("statusScope".to_string(), json!(args.status.as_api_value()));
     insert_option(&mut filter, "condition", args.condition.clone());
     insert_option(&mut filter, "startTime", args.start_time);
     insert_option(&mut filter, "endTime", args.end_time);
@@ -445,7 +445,18 @@ mod tests {
             condition: Some("vip".to_string()),
             ..ConversationFilterArgs::default()
         });
-        assert_eq!(value, json!({"condition": "vip"}));
+        assert_eq!(value, json!({"condition": "vip", "statusScope": "ALL"}));
+    }
+
+    #[test]
+    fn conversation_filter_sends_explicit_status_scope() {
+        let value = conversation_filter(&ConversationFilterArgs {
+            status: crate::cli::ConversationStatus::Open,
+            ..ConversationFilterArgs::default()
+        });
+
+        assert_eq!(value, json!({"statusScope": "OPEN"}));
+        assert!(value.get("status").is_none());
     }
 
     #[test]

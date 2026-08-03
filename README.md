@@ -68,8 +68,8 @@ ycloud tenants list
 ycloud integrations status
 ycloud contacts metadata
 ycloud contacts stats --start-time 2026-06-28T00:00:00+08:00 --end-time 2026-07-28T00:00:00+08:00 --group-by source
-ycloud inbox conversations search --inbox-id inbox-1 --limit 100
-ycloud inbox conversations export --inbox-id inbox-1 --output-dir ./export
+ycloud inbox conversations search --inbox-id inbox-1 --status all --limit 100
+ycloud inbox conversations export --inbox-id inbox-1 --status all --output-dir ./export
 ycloud contacts export --condition vip --format csv --output-dir ./export
 ycloud whatsapp waba-assignment list --waba-id WABA_ID
 ycloud whatsapp waba-assignment list --json
@@ -85,6 +85,10 @@ ycloud analytics calling-logs --page-no 1 --page-size 20
 ycloud refresh
 ycloud logout
 ```
+
+Inbox conversation search and export default to `--status all`. Use `--status open` or
+`--status closed` to select one state; the legacy aliases `1` (open) and `0` (closed) remain
+accepted.
 
 Export creation waits by default, then downloads the independent ready artifacts. Use
 `--no-wait` to return the task ID immediately. `--archive` requests an additional ZIP when the
