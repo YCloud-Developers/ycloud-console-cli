@@ -21,6 +21,8 @@ const packageFiles = [
   "npm/platforms/darwin-x64/package.json",
   "npm/platforms/linux-arm64/package.json",
   "npm/platforms/linux-x64/package.json",
+  "npm/platforms/windows-arm64/package.json",
+  "npm/platforms/windows-x64/package.json",
 ];
 
 for (const relativePath of packageFiles) {

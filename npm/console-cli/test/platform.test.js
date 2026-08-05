@@ -19,6 +19,14 @@ test("maps supported platforms to scoped native packages", () => {
     platformPackage("linux", "x64"),
     "@ycloud-ai/console-cli-linux-x64",
   );
+  assert.equal(
+    platformPackage("win32", "arm64"),
+    "@ycloud-ai/console-cli-windows-arm64",
+  );
+  assert.equal(
+    platformPackage("win32", "x64"),
+    "@ycloud-ai/console-cli-windows-x64",
+  );
 });
 
 test("rejects unsupported platforms", () => {

@@ -39,7 +39,14 @@ brew install YCloud-Developers/tap/ycloud
 ycloud --version
 ```
 
-Release packages support macOS and Linux on ARM64 and x64.
+Release packages support macOS, Linux, and Windows on ARM64 and x64.
+Windows users can install the same npm launcher from PowerShell, Command Prompt, or a
+Node.js-enabled terminal:
+
+```powershell
+npm install --global @ycloud-ai/console-cli
+ycloud --version
+```
 
 ## Local Test Against Dashboard
 
@@ -198,7 +205,7 @@ In the default browser flow, an authorization rejection returns to the localhost
 
 ## Config
 
-Config is stored at `~/.ycloud/config.toml`. The Dashboard defaults to `https://www.ycloud.com`. Override the config path with `YCLOUD_CONFIG` and the Dashboard base URL with `YCLOUD_DASHBOARD_URL`.
+Config is stored at `~/.ycloud/config.toml` (`%USERPROFILE%\.ycloud\config.toml` on Windows). The Dashboard defaults to `https://www.ycloud.com`. Override the config path with `YCLOUD_CONFIG` and the Dashboard base URL with `YCLOUD_DASHBOARD_URL`.
 
 Tokens are persisted in this first P0 implementation so the backend flow can be tested end to end. The production hardening path is system keychain first, file fallback with strict permissions and an explicit warning.
 

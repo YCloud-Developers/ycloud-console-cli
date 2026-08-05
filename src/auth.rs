@@ -251,7 +251,9 @@ fn open_browser(url: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     let status = Command::new("open").arg(url).status();
     #[cfg(target_os = "windows")]
-    let status = Command::new("cmd").args(["/C", "start", "", url]).status();
+    let status = Command::new("rundll32.exe")
+        .args(["url.dll,FileProtocolHandler", url])
+        .status();
     #[cfg(all(unix, not(target_os = "macos")))]
     let status = Command::new("xdg-open").arg(url).status();
 

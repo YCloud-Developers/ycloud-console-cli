@@ -15,7 +15,10 @@ function collectArchives(directory) {
     const entryPath = path.join(directory, entry.name);
     if (entry.isDirectory()) {
       archives.push(...collectArchives(entryPath));
-    } else if (entry.isFile() && entry.name.endsWith(".tar.gz")) {
+    } else if (
+      entry.isFile() &&
+      (entry.name.endsWith(".tar.gz") || entry.name.endsWith(".zip"))
+    ) {
       archives.push(entryPath);
     }
   }
@@ -29,7 +32,7 @@ const archives = collectArchives(artifacts).sort((left, right) =>
 );
 
 if (archives.length === 0) {
-  throw new Error(`no .tar.gz archives found in ${artifacts}`);
+  throw new Error(`no release archives found in ${artifacts}`);
 }
 
 const names = new Set();

@@ -1,0 +1,17 @@
+{
+  "name": "@ycloud-ai/console-cli-windows-x64",
+  "version": "0.2.2",
+  "description": "YCloud Console CLI native binary for Windows x64",
+  "homepage": "https://www.ycloud.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YCloud-Developers/ycloud-console-cli"
+  },
+  "license": "MIT",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": ["bin/ycloud.exe"],
+  "publishConfig": {
+    "access": "public"
+  }
+}

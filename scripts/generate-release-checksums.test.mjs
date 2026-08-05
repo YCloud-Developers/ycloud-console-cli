@@ -19,8 +19,10 @@ test("writes portable checksums using release asset names", () => {
   const artifacts = path.join(work, "artifacts");
   fs.mkdirSync(path.join(artifacts, "release-linux"), { recursive: true });
   fs.mkdirSync(path.join(artifacts, "release-darwin"), { recursive: true });
+  fs.mkdirSync(path.join(artifacts, "release-windows"), { recursive: true });
   fs.writeFileSync(path.join(artifacts, "release-linux", "ycloud-linux.tar.gz"), "linux");
   fs.writeFileSync(path.join(artifacts, "release-darwin", "ycloud-darwin.tar.gz"), "darwin");
+  fs.writeFileSync(path.join(artifacts, "release-windows", "ycloud-windows.zip"), "windows");
 
   const output = path.join(work, "SHA256SUMS");
   const result = spawnSync(process.execPath, [script, artifacts, output], {
@@ -29,7 +31,7 @@ test("writes portable checksums using release asset names", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(
     fs.readFileSync(output, "utf8"),
-    `${checksum("darwin")}  ycloud-darwin.tar.gz\n${checksum("linux")}  ycloud-linux.tar.gz\n`,
+    `${checksum("darwin")}  ycloud-darwin.tar.gz\n${checksum("linux")}  ycloud-linux.tar.gz\n${checksum("windows")}  ycloud-windows.zip\n`,
   );
 });
 
