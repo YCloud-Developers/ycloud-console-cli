@@ -49,3 +49,5 @@ git push origin v0.2.0
 ```
 
 The workflow builds native binaries on GitHub-hosted macOS, Linux, and Windows runners, creates a private-repository GitHub Release for maintainers, publishes the npm packages, and updates the public Homebrew tap from the native npm tarballs. Windows ARM64 and x64 are distributed both as release ZIPs and through the npm launcher.
+
+The publish job is safe to retry for the same tag. It skips npm package versions that already exist, reuses an existing draft GitHub Release, leaves an already-published release unchanged, and avoids an empty Homebrew commit when the formula is already current.
