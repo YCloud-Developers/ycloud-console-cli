@@ -5,6 +5,8 @@ const PLATFORM_PACKAGES = {
   "darwin-x64": "@ycloud-ai/console-cli-darwin-x64",
   "linux-arm64": "@ycloud-ai/console-cli-linux-arm64",
   "linux-x64": "@ycloud-ai/console-cli-linux-x64",
+  "win32-arm64": "@ycloud-ai/console-cli-windows-arm64",
+  "win32-x64": "@ycloud-ai/console-cli-windows-x64",
 };
 
 function platformPackage(platform, arch) {

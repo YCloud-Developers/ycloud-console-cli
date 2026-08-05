@@ -49,6 +49,12 @@ jobs:
           - platform: linux-x64
             runner: ubuntu-24.04
             target: x86_64-unknown-linux-musl
+          - platform: windows-x64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+          - platform: windows-arm64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
@@ -63,6 +69,7 @@ jobs:
       - name: Build release binary
         run: cargo build --locked --release --target "${{ matrix.target }}"
       - name: Package release binary
+        if: ${{ !startsWith(matrix.platform, 'windows-') }}
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
@@ -71,6 +78,16 @@ jobs:
           mkdir -p "${output}"
           install -m 755 "target/${{ matrix.target }}/release/ycloud" "${output}/ycloud"
           tar -C "${output}" -czf "${output}/${archive}" ycloud
+      - name: Package Windows release binary
+        if: startsWith(matrix.platform, 'windows-')
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $output = "dist/${{ matrix.platform }}"
+          $archive = "ycloud-v${version}-${{ matrix.target }}.zip"
+          New-Item -ItemType Directory -Force -Path $output | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/ycloud.exe" "$output/ycloud.exe"
+          Compress-Archive -Path "$output/ycloud.exe" -DestinationPath "$output/$archive"
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.platform }}
@@ -114,7 +131,9 @@ jobs:
             --draft \
             --generate-notes \
             --title "YCloud Console CLI ${GITHUB_REF_NAME}" \
-            release-artifacts/release-*/*.tar.gz SHA256SUMS
+            release-artifacts/release-*/*.tar.gz \
+            release-artifacts/release-*/*.zip \
+            SHA256SUMS
       - name: Publish native npm packages
         run: |
           for package in npm-tarballs/*.tgz; do
@@ -167,6 +186,8 @@ jobs:
           - runner: macos-15-intel
           - runner: ubuntu-24.04-arm
           - runner: ubuntu-24.04
+          - runner: windows-2025
+          - runner: windows-11-arm
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/setup-node@v6

@@ -13,7 +13,7 @@
 1. Keep the source repository private and use the MIT license for distributed source and binaries.
 2. Create `YCloud-Developers/ycloud-console-cli` as private and `YCloud-Developers/homebrew-tap` as public.
 3. Create a protected GitHub environment named `release` with required reviewers.
-4. Bootstrap the five npm packages with a maintainer account and 2FA.
+4. Bootstrap the seven npm packages with a maintainer account and 2FA.
 5. Configure every npm package to trust:
    - organization: `YCloud-Developers`
    - repository: `ycloud-console-cli`
@@ -48,4 +48,4 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
-The workflow builds native binaries on GitHub-hosted macOS and Linux runners, creates a private-repository GitHub Release for maintainers, publishes the npm packages, and updates the public Homebrew tap from the native npm tarballs.
+The workflow builds native binaries on GitHub-hosted macOS, Linux, and Windows runners, creates a private-repository GitHub Release for maintainers, publishes the npm packages, and updates the public Homebrew tap from the native npm tarballs. Windows ARM64 and x64 are distributed both as release ZIPs and through the npm launcher.

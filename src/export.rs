@@ -352,8 +352,25 @@ fn insert_option<T: serde::Serialize>(
 }
 
 fn safe_file_name(value: &str) -> Result<&str> {
-    let path = Path::new(value);
-    if path.file_name().and_then(|name| name.to_str()) != Some(value) || value.is_empty() {
+    let invalid_character = value.chars().any(|character| {
+        matches!(
+            character,
+            '/' | '\\' | '<' | '>' | ':' | '"' | '|' | '?' | '*'
+        ) || character == '\0'
+    });
+    let stem = value.split('.').next().unwrap_or_default();
+    let upper_stem = stem.to_ascii_uppercase();
+    let windows_reserved = matches!(upper_stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (upper_stem.len() == 4
+            && matches!(&upper_stem[..3], "COM" | "LPT")
+            && matches!(upper_stem.as_bytes()[3], b'1'..=b'9'));
+    if value.is_empty()
+        || value == "."
+        || value == ".."
+        || value.ends_with(['.', ' '])
+        || invalid_character
+        || windows_reserved
+    {
         anyhow::bail!("server returned an unsafe artifact file name");
     }
     Ok(value)
@@ -436,6 +453,11 @@ mod tests {
     fn rejects_path_traversal_from_server_file_name() {
         assert!(safe_file_name("../contacts.csv").is_err());
         assert!(safe_file_name("nested/contacts.csv").is_err());
+        assert!(safe_file_name("nested\\contacts.csv").is_err());
+        assert!(safe_file_name("contacts:1.csv").is_err());
+        assert!(safe_file_name("CON").is_err());
+        assert!(safe_file_name("com1.txt").is_err());
+        assert!(safe_file_name("contacts.csv.").is_err());
         assert_eq!(safe_file_name("contacts.csv").unwrap(), "contacts.csv");
     }
 
