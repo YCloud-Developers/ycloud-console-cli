@@ -70,6 +70,11 @@ pub enum Command {
         #[command(subcommand)]
         command: ContactsCommand,
     },
+    #[command(about = "Query and export multi-Campaign messages and analytics")]
+    Campaign {
+        #[command(subcommand)]
+        command: CampaignCommand,
+    },
     #[command(about = "Query WhatsApp account and phone-number data")]
     Whatsapp {
         #[command(subcommand)]
@@ -193,6 +198,142 @@ pub enum ContactsCommand {
     Export(ContactExportArgs),
 }
 
+#[derive(Debug, Subcommand, Clone)]
+pub enum CampaignCommand {
+    #[command(about = "List tenant-scoped Campaign metadata")]
+    List(CampaignListArgs),
+    #[command(about = "Search metadata-only messages across Campaigns")]
+    Messages(CampaignMessagesArgs),
+    #[command(about = "Aggregate analytics across Campaigns")]
+    Analytics(CampaignAnalyticsArgs),
+    #[command(about = "Export up to one million Campaign message metadata rows")]
+    Export(CampaignExportArgs),
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct CampaignListArgs {
+    #[arg(long = "campaign-id", value_delimiter = ',')]
+    pub campaign_ids: Vec<String>,
+    #[arg(long)]
+    pub name: Option<String>,
+    #[arg(long = "waba-id", value_delimiter = ',')]
+    pub waba_ids: Vec<String>,
+    #[arg(long = "business-phone", value_delimiter = ',')]
+    pub business_phones: Vec<String>,
+    #[arg(long = "template-id", value_delimiter = ',')]
+    pub template_ids: Vec<String>,
+    #[arg(long)]
+    pub template_name: Option<String>,
+    #[arg(long = "status", value_delimiter = ',')]
+    pub statuses: Vec<i32>,
+    #[arg(long)]
+    pub create_time_gte: Option<i64>,
+    #[arg(long)]
+    pub create_time_lt: Option<i64>,
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+    pub page_no: u32,
+    #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..=100))]
+    pub page_size: u32,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct CampaignMessageFilterArgs {
+    #[arg(
+        long = "campaign-id",
+        value_delimiter = ',',
+        required = true,
+        help = "Campaign ID; repeat or comma-separate up to 100 values"
+    )]
+    pub campaign_ids: Vec<String>,
+    #[arg(long, help = "Inclusive Unix epoch milliseconds")]
+    pub start_time: i64,
+    #[arg(long, help = "Exclusive Unix epoch milliseconds")]
+    pub end_time: i64,
+    #[arg(
+        long,
+        default_value = "UTC",
+        help = "IANA timezone for the natural 90-day limit"
+    )]
+    pub timezone: String,
+    #[arg(long = "status", value_delimiter = ',')]
+    pub statuses: Vec<String>,
+    #[arg(long = "template-name", value_delimiter = ',')]
+    pub template_names: Vec<String>,
+    #[arg(long = "business-phone", value_delimiter = ',')]
+    pub business_phones: Vec<String>,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct CampaignMessagesArgs {
+    #[command(flatten)]
+    pub filter: CampaignMessageFilterArgs,
+    #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..=1000))]
+    pub limit: u32,
+    #[arg(long)]
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum CampaignAnalyticsDimension {
+    Campaign,
+    Template,
+    BusinessPhone,
+    Date,
+    Status,
+    FailureReason,
+}
+
+impl CampaignAnalyticsDimension {
+    pub fn as_api_value(self) -> &'static str {
+        match self {
+            Self::Campaign => "campaign",
+            Self::Template => "template",
+            Self::BusinessPhone => "business_phone",
+            Self::Date => "date",
+            Self::Status => "status",
+            Self::FailureReason => "failure_reason",
+        }
+    }
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct CampaignAnalyticsArgs {
+    #[arg(long = "campaign-id", value_delimiter = ',', required = true)]
+    pub campaign_ids: Vec<String>,
+    #[arg(long, help = "Inclusive Unix epoch milliseconds")]
+    pub start_time: i64,
+    #[arg(long, help = "Exclusive Unix epoch milliseconds")]
+    pub end_time: i64,
+    #[arg(
+        long,
+        default_value = "UTC",
+        help = "IANA timezone for the natural 90-day limit"
+    )]
+    pub timezone: String,
+    #[arg(
+        long = "dimension",
+        value_enum,
+        value_delimiter = ',',
+        default_value = "campaign"
+    )]
+    pub dimensions: Vec<CampaignAnalyticsDimension>,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct CampaignExportArgs {
+    #[command(flatten)]
+    pub filter: CampaignMessageFilterArgs,
+    #[arg(long)]
+    pub file_name: Option<String>,
+    #[arg(
+        long,
+        help = "Reuse this key to recover safely from an uncertain create response"
+    )]
+    pub idempotency_key: Option<String>,
+    #[command(flatten)]
+    pub wait: ExportWaitArgs,
+}
+
 #[derive(Debug, ValueEnum, Clone, Copy, PartialEq, Eq)]
 pub enum ContactGroupBy {
     Source,
@@ -269,6 +410,8 @@ pub enum ExportsCommand {
     Query(ExportTaskArgs),
     #[command(about = "Retry a failed or partially successful export as a new task")]
     Retry(ExportRetryArgs),
+    #[command(about = "Cancel a pending or processing export")]
+    Cancel(ExportTaskArgs),
     #[command(about = "Download selected ready artifacts")]
     Download(ExportDownloadArgs),
 }
@@ -301,6 +444,7 @@ pub enum ExportArtifactType {
     Conversations,
     Contacts,
     Messages,
+    CampaignMessages,
     TemplateStatistics,
     Manifest,
     Archive,
@@ -312,6 +456,7 @@ impl ExportArtifactType {
             Self::Conversations => "CONVERSATIONS",
             Self::Contacts => "CONTACTS",
             Self::Messages => "MESSAGES",
+            Self::CampaignMessages => "CAMPAIGN_MESSAGES",
             Self::TemplateStatistics => "TEMPLATE_STATISTICS",
             Self::Manifest => "MANIFEST",
             Self::Archive => "ARCHIVE",
@@ -925,6 +1070,57 @@ mod tests {
             };
             assert_eq!(args.filter.status, expected);
         }
+    }
+
+    #[test]
+    fn parses_multi_campaign_messages_and_export_artifact() {
+        let cli = Cli::try_parse_from([
+            "ycloud",
+            "campaign",
+            "messages",
+            "--campaign-id",
+            "campaign-1,campaign-2",
+            "--start-time",
+            "1",
+            "--end-time",
+            "2",
+            "--timezone",
+            "UTC",
+            "--status",
+            "sent,delivered",
+        ])
+        .unwrap();
+        let Command::Campaign {
+            command: CampaignCommand::Messages(args),
+        } = cli.command
+        else {
+            panic!("expected Campaign messages command");
+        };
+        assert_eq!(args.filter.campaign_ids, ["campaign-1", "campaign-2"]);
+        assert_eq!(args.filter.statuses, ["sent", "delivered"]);
+
+        let cli = Cli::try_parse_from([
+            "ycloud",
+            "exports",
+            "download",
+            "task-1",
+            "--artifact",
+            "campaign-messages,manifest",
+        ])
+        .unwrap();
+        let Command::Exports {
+            command: ExportsCommand::Download(args),
+        } = cli.command
+        else {
+            panic!("expected export download command");
+        };
+        assert_eq!(
+            args.artifacts,
+            [
+                ExportArtifactType::CampaignMessages,
+                ExportArtifactType::Manifest
+            ]
+        );
     }
 
     #[test]

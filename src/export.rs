@@ -1,4 +1,5 @@
 use std::{
+    collections::{BTreeSet, HashMap},
     fs,
     path::{Path, PathBuf},
     time::{Duration, Instant},
@@ -151,6 +152,19 @@ pub async fn retry_export(
     finish_created_task(client, &config, task, args.wait).await
 }
 
+pub async fn cancel_export(
+    client: &DashboardClient,
+    config_path: &Path,
+    args: ExportTaskArgs,
+) -> Result<()> {
+    let config = Config::load(config_path)?;
+    let task = client
+        .cancel_export(&config.auth.access_token, &args.task_id)
+        .await?
+        .require_data("export cancel")?;
+    print_task(&task)
+}
+
 pub async fn download_export(
     client: &DashboardClient,
     config_path: &Path,
@@ -164,10 +178,11 @@ pub async fn download_export(
     ensure_downloadable(&task)?;
     let downloads =
         download_artifacts(client, &config, &task, &args.artifacts, &args.output_dir).await?;
+    validate_campaign_manifest(&task, &downloads)?;
     print_downloads(&task, &downloads, args.json)
 }
 
-async fn finish_created_task(
+pub(crate) async fn finish_created_task(
     client: &DashboardClient,
     config: &Config,
     task: ExportTask,
@@ -187,6 +202,7 @@ async fn finish_created_task(
     ensure_downloadable(&task)?;
     let downloads =
         download_artifacts(client, config, &task, &wait.artifacts, &wait.output_dir).await?;
+    validate_campaign_manifest(&task, &downloads)?;
     print_downloads(&task, &downloads, wait.json)
 }
 
@@ -222,6 +238,7 @@ fn ensure_downloadable(task: &ExportTask) -> Result<()> {
                 .as_deref()
                 .unwrap_or("unknown export failure")
         ),
+        "CANCELED" => anyhow::bail!("export task {} was canceled", task.task_id),
         status => anyhow::bail!("export task {} is not ready: {status}", task.task_id),
     }
 }
@@ -242,10 +259,15 @@ async fn download_artifacts(
             .filter(|artifact| !artifact.r#type.eq_ignore_ascii_case("ARCHIVE"))
             .collect()
     } else {
+        let include_campaign_manifest = task.task_type.eq_ignore_ascii_case("CAMPAIGN_MESSAGE")
+            && selected.contains(&ExportArtifactType::CampaignMessages);
         task.artifacts
             .iter()
             .filter(|artifact| artifact.status.eq_ignore_ascii_case("READY"))
             .filter(|artifact| {
+                if include_campaign_manifest && artifact.r#type.eq_ignore_ascii_case("MANIFEST") {
+                    return true;
+                }
                 selected.iter().any(|requested| {
                     requested
                         .as_api_value()
@@ -306,12 +328,92 @@ async fn download_artifacts(
             artifact_id: metadata.artifact_id,
             artifact_type: metadata.artifact_type,
             part_number: metadata.part_number,
+            file_name: metadata.file_name,
             path: destination,
             size: receipt.size,
             checksum_sha256: receipt.checksum_sha256,
         });
     }
     Ok(downloads)
+}
+
+fn validate_campaign_manifest(task: &ExportTask, downloads: &[DownloadedArtifact]) -> Result<()> {
+    if !task.task_type.eq_ignore_ascii_case("CAMPAIGN_MESSAGE")
+        || !downloads
+            .iter()
+            .any(|item| item.artifact_type.eq_ignore_ascii_case("CAMPAIGN_MESSAGES"))
+    {
+        return Ok(());
+    }
+    let manifest = downloads
+        .iter()
+        .find(|item| item.artifact_type.eq_ignore_ascii_case("MANIFEST"))
+        .context("Campaign message parts require the manifest artifact")?;
+    let value: Value = serde_json::from_slice(
+        &fs::read(&manifest.path)
+            .with_context(|| format!("failed to read {}", manifest.path.display()))?,
+    )
+    .context("Campaign export manifest is not valid JSON")?;
+    if value.get("taskId").and_then(Value::as_str) != Some(task.task_id.as_str())
+        || value.get("taskType").and_then(Value::as_str) != Some("CAMPAIGN_MESSAGE")
+        || value.get("status").and_then(Value::as_str) != Some("FINISHED")
+    {
+        anyhow::bail!("Campaign export manifest identity or terminal status does not match task");
+    }
+    let artifacts = value
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .context("Campaign export manifest is missing artifacts")?;
+    let expected = artifacts
+        .iter()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("CAMPAIGN_MESSAGES"))
+        .collect::<Vec<_>>();
+    let actual = downloads
+        .iter()
+        .filter(|item| item.artifact_type.eq_ignore_ascii_case("CAMPAIGN_MESSAGES"))
+        .map(|item| (item.part_number, item))
+        .collect::<HashMap<_, _>>();
+    if expected.len() != actual.len() {
+        anyhow::bail!("Campaign export manifest part count does not match downloaded parts");
+    }
+    let mut part_numbers = BTreeSet::new();
+    for item in &expected {
+        let part_number = u32::try_from(
+            item.get("partNumber")
+                .and_then(Value::as_u64)
+                .context("Campaign export manifest part is missing partNumber")?,
+        )
+        .context("Campaign export manifest partNumber is too large")?;
+        if !part_numbers.insert(part_number) {
+            anyhow::bail!("Campaign export manifest contains duplicate part numbers");
+        }
+        let downloaded = actual
+            .get(&Some(part_number))
+            .with_context(|| format!("Campaign export part {part_number} was not downloaded"))?;
+        if item.get("artifactId").and_then(Value::as_str) != downloaded.artifact_id.as_deref()
+            || item.get("fileName").and_then(Value::as_str) != Some(downloaded.file_name.as_str())
+            || item.get("size").and_then(Value::as_u64) != Some(downloaded.size)
+            || item.get("checksumSha256").and_then(Value::as_str)
+                != Some(downloaded.checksum_sha256.as_str())
+        {
+            anyhow::bail!("Campaign export part {part_number} does not match the manifest");
+        }
+    }
+    if part_numbers
+        .iter()
+        .copied()
+        .ne(1..=(part_numbers.len() as u32))
+    {
+        anyhow::bail!("Campaign export manifest part numbers are not contiguous");
+    }
+    let manifest_parts = value
+        .pointer("/counts/messageParts")
+        .and_then(Value::as_u64)
+        .context("Campaign export manifest is missing counts.messageParts")?;
+    if manifest_parts != expected.len() as u64 {
+        anyhow::bail!("Campaign export manifest messageParts count is inconsistent");
+    }
+    Ok(())
 }
 
 fn conversation_filter(args: &ConversationFilterArgs) -> Value {
@@ -427,6 +529,7 @@ struct DownloadedArtifact {
     artifact_id: Option<String>,
     artifact_type: String,
     part_number: Option<u32>,
+    file_name: String,
     path: PathBuf,
     size: u64,
     checksum_sha256: String,
@@ -438,6 +541,7 @@ impl DownloadedArtifact {
             "artifactId": self.artifact_id,
             "artifactType": self.artifact_type,
             "partNumber": self.part_number,
+            "fileName": self.file_name,
             "path": self.path,
             "size": self.size,
             "checksumSha256": self.checksum_sha256,
@@ -503,5 +607,66 @@ mod tests {
 
         assert_eq!(request["includeMessages"], json!(true));
         assert_eq!(request["includeContacts"], json!(true));
+    }
+
+    #[test]
+    fn campaign_manifest_requires_contiguous_matching_parts() {
+        let directory = tempfile::tempdir().unwrap();
+        let manifest_path = directory.path().join("manifest.json");
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec(&json!({
+                "taskId": "task-1",
+                "taskType": "CAMPAIGN_MESSAGE",
+                "status": "FINISHED",
+                "counts": {"messageParts": 1},
+                "artifacts": [{
+                    "artifactId": "campaign-messages-1",
+                    "type": "CAMPAIGN_MESSAGES",
+                    "partNumber": 1,
+                    "fileName": "campaign-messages-00001.jsonl",
+                    "size": 10,
+                    "checksumSha256": "abc"
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let task = ExportTask {
+            task_id: "task-1".into(),
+            task_type: "CAMPAIGN_MESSAGE".into(),
+            status: "FINISHED".into(),
+            progress: 100,
+            record_count: Some(1),
+            previous_task_id: None,
+            truncated: None,
+            truncation_reason: None,
+            artifacts: Vec::new(),
+            warnings: Vec::new(),
+            error_code: None,
+            error_message: None,
+        };
+        let downloads = vec![
+            DownloadedArtifact {
+                artifact_id: Some("campaign-messages-1".into()),
+                artifact_type: "CAMPAIGN_MESSAGES".into(),
+                part_number: Some(1),
+                file_name: "campaign-messages-00001.jsonl".into(),
+                path: directory.path().join("campaign-messages-00001.jsonl"),
+                size: 10,
+                checksum_sha256: "abc".into(),
+            },
+            DownloadedArtifact {
+                artifact_id: Some("manifest".into()),
+                artifact_type: "MANIFEST".into(),
+                part_number: None,
+                file_name: "manifest.json".into(),
+                path: manifest_path,
+                size: 1,
+                checksum_sha256: "manifest-checksum".into(),
+            },
+        ];
+
+        validate_campaign_manifest(&task, &downloads).unwrap();
     }
 }

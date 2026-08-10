@@ -1,5 +1,6 @@
 pub mod analytics;
 pub mod auth;
+pub mod campaign;
 pub mod cli;
 pub mod config;
 pub mod export;
@@ -14,8 +15,8 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{
-    AnalyticsCommand, AnalyticsTemplatesCommand, Cli, Command, ContactsCommand, ExportsCommand,
-    InboxCommand, InboxConversationsCommand, IntegrationsCommand, TenantsCommand,
+    AnalyticsCommand, AnalyticsTemplatesCommand, CampaignCommand, Cli, Command, ContactsCommand,
+    ExportsCommand, InboxCommand, InboxConversationsCommand, IntegrationsCommand, TenantsCommand,
     WabaAssignmentCommand, WhatsappCommand, DEFAULT_DASHBOARD_URL,
 };
 use config::Config;
@@ -165,6 +166,23 @@ async fn execute_once(
                 }
             }
         }
+        Command::Campaign { command } => {
+            let client = saved_client(cli, config_path, invocation_mode)?;
+            match command {
+                CampaignCommand::List(args) => {
+                    campaign::list(&client, config_path, args.clone()).await
+                }
+                CampaignCommand::Messages(args) => {
+                    campaign::messages(&client, config_path, args.clone()).await
+                }
+                CampaignCommand::Analytics(args) => {
+                    campaign::analytics(&client, config_path, args.clone()).await
+                }
+                CampaignCommand::Export(args) => {
+                    campaign::export_messages(&client, config_path, args.clone()).await
+                }
+            }
+        }
         Command::Whatsapp { command } => {
             let client = saved_client(cli, config_path, invocation_mode)?;
             match command {
@@ -196,6 +214,9 @@ async fn execute_once(
                 }
                 ExportsCommand::Retry(args) => {
                     export::retry_export(&client, config_path, args.clone()).await
+                }
+                ExportsCommand::Cancel(args) => {
+                    export::cancel_export(&client, config_path, args.clone()).await
                 }
                 ExportsCommand::Download(args) => {
                     export::download_export(&client, config_path, args.clone()).await
@@ -278,6 +299,9 @@ fn preserve_idempotency_key(command: &mut Command) {
                     command: AnalyticsTemplatesCommand::Export(args),
                 },
         } => &mut args.idempotency_key,
+        Command::Campaign {
+            command: CampaignCommand::Export(args),
+        } => &mut args.idempotency_key,
         _ => return,
     };
     if slot.is_none() {
@@ -359,6 +383,32 @@ mod tests {
         } = cli.command
         else {
             panic!("expected template statistics export");
+        };
+        assert!(args.idempotency_key.is_some());
+    }
+
+    #[test]
+    fn campaign_export_receives_generated_idempotency_key() {
+        let mut cli = Cli::try_parse_from([
+            "ycloud",
+            "campaign",
+            "export",
+            "--campaign-id",
+            "campaign-1",
+            "--start-time",
+            "1",
+            "--end-time",
+            "2",
+            "--no-wait",
+        ])
+        .unwrap();
+
+        preserve_idempotency_key(&mut cli.command);
+        let Command::Campaign {
+            command: CampaignCommand::Export(args),
+        } = cli.command
+        else {
+            panic!("expected Campaign export");
         };
         assert!(args.idempotency_key.is_some());
     }

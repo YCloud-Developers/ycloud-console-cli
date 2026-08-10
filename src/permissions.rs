@@ -4,9 +4,9 @@ use reqwest::StatusCode;
 
 use crate::{
     cli::{
-        AnalyticsCommand, Cli, Command, ContactsCommand, ExportsCommand, InboxCommand,
-        InboxConversationsCommand, IntegrationsCommand, TenantsCommand, WabaAssignmentCommand,
-        WhatsappCommand,
+        AnalyticsCommand, CampaignCommand, Cli, Command, ContactsCommand, ExportsCommand,
+        InboxCommand, InboxConversationsCommand, IntegrationsCommand, TenantsCommand,
+        WabaAssignmentCommand, WhatsappCommand,
     },
     http::DashboardApiError,
 };
@@ -110,6 +110,18 @@ fn static_permissions(command: &Command) -> Vec<&'static str> {
         Command::Contacts {
             command: ContactsCommand::Export(_),
         } => vec!["yc.contact.record.export"],
+        Command::Campaign {
+            command: CampaignCommand::List(_),
+        } => vec!["yc.campaign.record.read"],
+        Command::Campaign {
+            command: CampaignCommand::Messages(_),
+        } => vec!["yc.campaign.record.read", "yc.whatsapp.message.read"],
+        Command::Campaign {
+            command: CampaignCommand::Analytics(_),
+        } => vec!["yc.campaign.record.read", "yc.whatsapp.analytics.read"],
+        Command::Campaign {
+            command: CampaignCommand::Export(_),
+        } => vec!["yc.campaign.message.export", "yc.campaign.record.read"],
         Command::Analytics {
             command:
                 AnalyticsCommand::Outline(_)
@@ -149,7 +161,10 @@ fn static_permissions(command: &Command) -> Vec<&'static str> {
         }
         Command::Exports {
             command:
-                ExportsCommand::Query(_) | ExportsCommand::Retry(_) | ExportsCommand::Download(_),
+                ExportsCommand::Query(_)
+                | ExportsCommand::Retry(_)
+                | ExportsCommand::Cancel(_)
+                | ExportsCommand::Download(_),
         } => vec![],
     }
 }
