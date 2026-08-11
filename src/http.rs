@@ -484,19 +484,6 @@ impl DashboardClient {
         .await
     }
 
-    pub async fn cancel_export(
-        &self,
-        access_token: &str,
-        task_id: &str,
-    ) -> Result<ApiEnvelope<ExportTask>> {
-        self.post_json(
-            "/api/cli/v1/exports/cancel",
-            Some(access_token),
-            &serde_json::json!({"taskId": task_id}),
-        )
-        .await
-    }
-
     pub async fn export_artifact_url(
         &self,
         access_token: &str,
@@ -1005,7 +992,7 @@ impl ExportTask {
     pub fn terminal(&self) -> bool {
         matches!(
             self.status.to_ascii_uppercase().as_str(),
-            "FINISHED" | "FAILED" | "PARTIAL_SUCCESS" | "CANCELED"
+            "FINISHED" | "FAILED" | "PARTIAL_SUCCESS"
         )
     }
 }

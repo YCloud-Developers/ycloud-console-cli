@@ -215,9 +215,6 @@ async fn execute_once(
                 ExportsCommand::Retry(args) => {
                     export::retry_export(&client, config_path, args.clone()).await
                 }
-                ExportsCommand::Cancel(args) => {
-                    export::cancel_export(&client, config_path, args.clone()).await
-                }
                 ExportsCommand::Download(args) => {
                     export::download_export(&client, config_path, args.clone()).await
                 }

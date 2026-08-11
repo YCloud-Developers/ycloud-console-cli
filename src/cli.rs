@@ -410,8 +410,6 @@ pub enum ExportsCommand {
     Query(ExportTaskArgs),
     #[command(about = "Retry a failed or partially successful export as a new task")]
     Retry(ExportRetryArgs),
-    #[command(about = "Cancel a pending or processing export")]
-    Cancel(ExportTaskArgs),
     #[command(about = "Download selected ready artifacts")]
     Download(ExportDownloadArgs),
 }

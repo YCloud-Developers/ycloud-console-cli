@@ -152,19 +152,6 @@ pub async fn retry_export(
     finish_created_task(client, &config, task, args.wait).await
 }
 
-pub async fn cancel_export(
-    client: &DashboardClient,
-    config_path: &Path,
-    args: ExportTaskArgs,
-) -> Result<()> {
-    let config = Config::load(config_path)?;
-    let task = client
-        .cancel_export(&config.auth.access_token, &args.task_id)
-        .await?
-        .require_data("export cancel")?;
-    print_task(&task)
-}
-
 pub async fn download_export(
     client: &DashboardClient,
     config_path: &Path,
@@ -238,7 +225,6 @@ fn ensure_downloadable(task: &ExportTask) -> Result<()> {
                 .as_deref()
                 .unwrap_or("unknown export failure")
         ),
-        "CANCELED" => anyhow::bail!("export task {} was canceled", task.task_id),
         status => anyhow::bail!("export task {} is not ready: {status}", task.task_id),
     }
 }

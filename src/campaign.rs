@@ -359,7 +359,17 @@ pub struct CampaignAnalytics {
     #[serde(default)]
     pub data_points: Vec<CampaignAnalyticsDataPoint>,
     #[serde(default)]
+    pub campaign_lifetime_metrics: Vec<CampaignLifetimeMetric>,
+    #[serde(default)]
     pub availability: Vec<CampaignAnalyticsAvailability>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CampaignLifetimeMetric {
+    pub campaign_id: String,
+    pub clicked: u64,
+    pub scope: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -388,6 +398,7 @@ pub struct CampaignAnalyticsDataPoint {
 pub struct CampaignAnalyticsAvailability {
     pub source: String,
     pub available: bool,
+    pub scope: Option<String>,
     pub fresh_through: Option<i64>,
     pub reason_code: Option<String>,
 }

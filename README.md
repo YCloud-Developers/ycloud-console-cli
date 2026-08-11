@@ -87,7 +87,6 @@ ycloud campaign export --campaign-id CAMPAIGN_1,CAMPAIGN_2 --start-time 17829216
 ycloud whatsapp waba-assignment list --waba-id WABA_ID
 ycloud whatsapp waba-assignment list --json
 ycloud exports query TASK_ID
-ycloud exports cancel TASK_ID
 ycloud exports download TASK_ID --artifact conversations,messages,contacts,manifest --output-dir ./export
 ycloud exports download TASK_ID --artifact campaign-messages,manifest --output-dir ./export
 ycloud analytics outline
@@ -117,7 +116,7 @@ must be unique and are capped at 100. Campaign export has no feature switch: it 
 the explicit `yc.campaign.message.export` permission, hard server limits, rate limits, and an
 isolated background runtime budget. When Campaign JSONL parts are downloaded, the CLI also
 downloads the manifest, verifies every part's size and SHA-256, and rejects missing, duplicate, or
-non-contiguous parts. `CANCELED` is a terminal task status and is never treated as downloadable.
+non-contiguous parts. Task cancellation is intentionally not exposed by this CLI capability.
 
 Analytics commands default to the last 7 days and accept at most 90 natural days. Ranges up to 30 days use daily trend buckets; larger ranges use weekly buckets. Delivery rate is calculated from the aggregated delivered and total counts, and an empty denominator is printed as `-` in tables and `null` in JSON.
 

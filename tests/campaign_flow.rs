@@ -84,9 +84,19 @@ async fn campaign_analytics_preserves_unavailable_source() {
                 "windowEnd": 2,
                 "timezone": "UTC",
                 "dataPoints": [{"campaignId": "campaign-1", "total": 2}],
+                "campaignLifetimeMetrics": [{
+                    "campaignId": "campaign-1",
+                    "clicked": 7,
+                    "scope": "CAMPAIGN_LIFETIME"
+                }],
                 "availability": [
                     {"source": "security", "available": true, "freshThrough": 2},
-                    {"source": "clicks", "available": false, "reasonCode": "source_unavailable"}
+                    {
+                        "source": "clicks",
+                        "available": false,
+                        "scope": "CAMPAIGN_LIFETIME",
+                        "reasonCode": "source_unavailable"
+                    }
                 ]
             }
         })))
@@ -112,6 +122,14 @@ async fn campaign_analytics_preserves_unavailable_source() {
         .unwrap();
 
     assert!(!data.availability[1].available);
+    assert_eq!(data.campaign_lifetime_metrics.len(), 1);
+    assert_eq!(data.campaign_lifetime_metrics[0].campaign_id, "campaign-1");
+    assert_eq!(data.campaign_lifetime_metrics[0].clicked, 7);
+    assert_eq!(data.campaign_lifetime_metrics[0].scope, "CAMPAIGN_LIFETIME");
+    assert_eq!(
+        data.availability[1].scope.as_deref(),
+        Some("CAMPAIGN_LIFETIME")
+    );
     assert_eq!(
         data.availability[1].reason_code.as_deref(),
         Some("source_unavailable")
@@ -119,7 +137,7 @@ async fn campaign_analytics_preserves_unavailable_source() {
 }
 
 #[tokio::test]
-async fn campaign_export_and_cancel_use_dedicated_stable_paths() {
+async fn campaign_export_uses_dedicated_stable_path() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/api/cli/v1/campaign-message-exports"))
@@ -131,13 +149,6 @@ async fn campaign_export_and_cancel_use_dedicated_stable_paths() {
             "timezone": "UTC"
         })))
         .respond_with(ResponseTemplate::new(202).set_body_json(task("PENDING")))
-        .expect(1)
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path("/api/cli/v1/exports/cancel"))
-        .and(body_json(serde_json::json!({"taskId": "task-1"})))
-        .respond_with(ResponseTemplate::new(200).set_body_json(task("CANCELED")))
         .expect(1)
         .mount(&server)
         .await;
@@ -162,16 +173,8 @@ async fn campaign_export_and_cancel_use_dedicated_stable_paths() {
         .unwrap()
         .require_data("Campaign export")
         .unwrap();
-    let canceled = client
-        .cancel_export("YCLI.access", &created.task_id)
-        .await
-        .unwrap()
-        .require_data("export cancel")
-        .unwrap();
-
     assert_eq!(created.task_type, "CAMPAIGN_MESSAGE");
-    assert_eq!(canceled.status, "CANCELED");
-    assert!(canceled.terminal());
+    assert_eq!(created.status, "PENDING");
 }
 
 fn task(status: &str) -> serde_json::Value {
@@ -181,7 +184,7 @@ fn task(status: &str) -> serde_json::Value {
             "taskId": "task-1",
             "taskType": "CAMPAIGN_MESSAGE",
             "status": status,
-            "progress": if status == "CANCELED" { 100 } else { 0 },
+            "progress": 0,
             "artifacts": [],
             "warnings": []
         }

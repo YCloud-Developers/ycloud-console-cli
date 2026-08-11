@@ -161,10 +161,7 @@ fn static_permissions(command: &Command) -> Vec<&'static str> {
         }
         Command::Exports {
             command:
-                ExportsCommand::Query(_)
-                | ExportsCommand::Retry(_)
-                | ExportsCommand::Cancel(_)
-                | ExportsCommand::Download(_),
+                ExportsCommand::Query(_) | ExportsCommand::Retry(_) | ExportsCommand::Download(_),
         } => vec![],
     }
 }
