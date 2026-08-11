@@ -13,6 +13,8 @@
   artifact by default.
 - `ycloud contacts export` provides the same artifact workflow for contact filters without first exporting conversations.
 - `ycloud contacts stats` counts newly created contacts for an RFC 3339 time range and can filter or group by Contact Source without paging through contact details.
+- `ycloud campaign list`, `messages`, and `analytics` query up to 100 tenant-scoped Campaigns; message rows are metadata-only and use an opaque keyset cursor.
+- `ycloud campaign export` streams up to 1,000,000 metadata-only message rows as independently verified JSONL parts plus a manifest.
 - `ycloud whatsapp waba-assignment list` automatically pages and joins the current WABA phone inventory, direct and team-expanded human assignments, and normalized routing rules. It never treats a partial backend failure as an unassigned phone.
 - `ycloud analytics overview`, `trend`, and `templates` use the stable WhatsApp analytics contract. The CLI sends RFC 3339 time values and an IANA timezone such as `Asia/Shanghai`.
 - Business commands use only the stable `/api/cli/v1/**` contract and never fall back to `/api/cli/read/**`. The legacy adapters remain server-side for CLI v0.1.3 compatibility.
@@ -78,10 +80,15 @@ ycloud contacts stats --start-time 2026-06-28T00:00:00+08:00 --end-time 2026-07-
 ycloud inbox conversations search --inbox-id inbox-1 --status all --limit 100
 ycloud inbox conversations export --inbox-id inbox-1 --status all --output-dir ./export
 ycloud contacts export --condition vip --format csv --output-dir ./export
+ycloud campaign list --waba-id WABA_ID --page-size 20
+ycloud campaign messages --campaign-id CAMPAIGN_1,CAMPAIGN_2 --start-time 1782921600000 --end-time 1783526400000 --timezone Asia/Shanghai
+ycloud campaign analytics --campaign-id CAMPAIGN_1 --campaign-id CAMPAIGN_2 --start-time 1782921600000 --end-time 1783526400000 --dimension campaign,date
+ycloud campaign export --campaign-id CAMPAIGN_1,CAMPAIGN_2 --start-time 1782921600000 --end-time 1783526400000 --output-dir ./export
 ycloud whatsapp waba-assignment list --waba-id WABA_ID
 ycloud whatsapp waba-assignment list --json
 ycloud exports query TASK_ID
 ycloud exports download TASK_ID --artifact conversations,messages,contacts,manifest --output-dir ./export
+ycloud exports download TASK_ID --artifact campaign-messages,manifest --output-dir ./export
 ycloud analytics outline
 ycloud analytics overview
 ycloud analytics trend --preset last-30-days
@@ -103,6 +110,14 @@ server-side feature is enabled; ZIP never replaces the conversation, contact, or
 Downloads are streamed through a `.part` file, verified against the server-provided size and
 SHA-256 checksum, and never overwrite an existing file.
 
+Campaign message and analytics ranges are half-open `[startTime,endTime)` and may span at most 90
+natural days in the supplied IANA timezone. Campaign IDs may be repeated or comma-separated, but
+must be unique and are capped at 100. Campaign export has no feature switch: it is controlled by
+the explicit `yc.campaign.message.export` permission, hard server limits, rate limits, and an
+isolated background runtime budget. When Campaign JSONL parts are downloaded, the CLI also
+downloads the manifest, verifies every part's size and SHA-256, and rejects missing, duplicate, or
+non-contiguous parts. Task cancellation is intentionally not exposed by this CLI capability.
+
 Analytics commands default to the last 7 days and accept at most 90 natural days. Ranges up to 30 days use daily trend buckets; larger ranges use weekly buckets. Delivery rate is calculated from the aggregated delivered and total counts, and an empty denominator is printed as `-` in tables and `null` in JSON.
 
 Template statistics use the Dashboard's fixed page size of 10. Message-type rows contain total, delivered, and weighted delivery rate; failed and processing counts are available only for each overall trend bucket.
@@ -120,7 +135,7 @@ ycloud analytics calling-logs --start-time 1782921600000 --end-time 178352640000
 
 Analytics is operational reporting and must not be used for billing reconciliation. `overview` requests the summary, trend, and first template page concurrently. It prints successful sections even if another section fails, then exits nonzero. Large template result sets use the existing asynchronous export lifecycle and produce `TEMPLATE_STATISTICS` plus manifest artifacts.
 
-Contact statistics accepts a maximum 90-day half-open range `[startTime,endTime)`. Repeat `--source` to filter several sources; combine it with `--group-by source` to group only the selected sources. The command always prints stable JSON. Campaign queries are not included in this release.
+Contact statistics accepts a maximum 90-day half-open range `[startTime,endTime)`. Repeat `--source` to filter several sources; combine it with `--group-by source` to group only the selected sources. The command always prints stable JSON. Campaign commands also print stable JSON so cursors, availability, and task metadata remain machine-readable.
 
 ## Online Smoke
 
@@ -168,6 +183,14 @@ ycloud login --profile basic \
   --permission yc.whatsapp.phone.read \
   --permission yc.inbox.phone-assignment.read \
   --permission yc.inbox.assignment-rule.read
+```
+
+Campaign search is included in `readonly` and `analytics-read`, but Campaign message export is an
+explicit HIGH-risk permission:
+
+```bash
+ycloud login --profile analytics-read \
+  --permission yc.campaign.message.export
 ```
 
 When a business command receives the typed v1 response `HTTP 403` with

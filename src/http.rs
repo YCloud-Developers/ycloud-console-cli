@@ -217,6 +217,41 @@ impl DashboardClient {
             .await
     }
 
+    pub async fn campaigns_search(
+        &self,
+        access_token: &str,
+        request: &crate::campaign::CampaignSearchRequest,
+    ) -> Result<ApiEnvelope<crate::campaign::CampaignPage>> {
+        self.post_json_safe("/api/cli/v1/campaigns/search", Some(access_token), request)
+            .await
+    }
+
+    pub async fn campaign_messages_search(
+        &self,
+        access_token: &str,
+        request: &crate::campaign::CampaignMessageSearchRequest,
+    ) -> Result<ApiEnvelope<Vec<crate::campaign::CampaignMessage>>> {
+        self.post_json_safe(
+            "/api/cli/v1/campaigns/messages/search",
+            Some(access_token),
+            request,
+        )
+        .await
+    }
+
+    pub async fn campaign_analytics(
+        &self,
+        access_token: &str,
+        request: &crate::campaign::CampaignAnalyticsRequest,
+    ) -> Result<ApiEnvelope<crate::campaign::CampaignAnalytics>> {
+        self.post_json_safe(
+            "/api/cli/v1/campaigns/analytics",
+            Some(access_token),
+            request,
+        )
+        .await
+    }
+
     pub async fn integrations_status(
         &self,
         access_token: &str,
@@ -399,6 +434,21 @@ impl DashboardClient {
     ) -> Result<ApiEnvelope<ExportTask>> {
         self.post_json_idempotent(
             "/api/cli/v1/contact-exports",
+            access_token,
+            idempotency_key,
+            request,
+        )
+        .await
+    }
+
+    pub async fn create_campaign_message_export(
+        &self,
+        access_token: &str,
+        idempotency_key: &str,
+        request: &crate::campaign::CampaignMessageExportRequest,
+    ) -> Result<ApiEnvelope<ExportTask>> {
+        self.post_json_idempotent(
+            "/api/cli/v1/campaign-message-exports",
             access_token,
             idempotency_key,
             request,
