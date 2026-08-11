@@ -1,6 +1,6 @@
 {
   "name": "@ycloud-ai/console-cli-windows-arm64",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "YCloud Console CLI native binary for Windows ARM64",
   "homepage": "https://www.ycloud.com",
   "repository": {
