@@ -4,6 +4,8 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use chrono::{Days, Duration as ChronoDuration, LocalResult, NaiveDate, TimeZone, Utc};
+use chrono_tz::Tz;
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -129,19 +131,33 @@ pub async fn templates_list(
 }
 
 pub(crate) fn request(args: &AnalyticsFilterArgs) -> Result<AnalyticsRequest> {
+    request_at(args, now_millis()?)
+}
+
+fn request_at(args: &AnalyticsFilterArgs, now: i64) -> Result<AnalyticsRequest> {
     if args.preset.is_some() && (args.range.start_time.is_some() || args.range.end_time.is_some()) {
         anyhow::bail!("preset cannot be combined with start-time or end-time");
     }
-    let end_time = args.range.end_time.unwrap_or(now_millis()?);
-    let days = args.preset.map(|value| value.days()).unwrap_or(7);
-    let start_time = args
-        .range
-        .start_time
-        .unwrap_or(end_time - Duration::from_secs((days * 24 * 60 * 60) as u64).as_millis() as i64);
+    let use_natural_day_preset =
+        args.preset.is_some() || (args.range.start_time.is_none() && args.range.end_time.is_none());
+    let (start_time, end_time) = if use_natural_day_preset {
+        natural_day_range(
+            args.preset.map(|value| value.days()).unwrap_or(7),
+            &args.timezone,
+            now,
+        )?
+    } else {
+        let end_time = args.range.end_time.unwrap_or(now);
+        let start_time = args
+            .range
+            .start_time
+            .unwrap_or(end_time - Duration::from_secs(7 * 24 * 60 * 60).as_millis() as i64);
+        (start_time, end_time)
+    };
     if start_time >= end_time {
         anyhow::bail!("start-time must be earlier than end-time");
     }
-    if end_time - start_time > Duration::from_secs(90 * 24 * 60 * 60).as_millis() as i64 {
+    if exceeds_natural_days(start_time, end_time, &args.timezone, 90)? {
         anyhow::bail!("analytics time range must not exceed 90 days");
     }
     Ok(AnalyticsRequest {
@@ -157,6 +173,58 @@ pub(crate) fn request(args: &AnalyticsFilterArgs) -> Result<AnalyticsRequest> {
             .collect(),
         waba_ids: distinct(&args.waba_ids),
     })
+}
+
+fn natural_day_range(days: i64, timezone: &str, now: i64) -> Result<(i64, i64)> {
+    let timezone = parse_timezone(timezone)?;
+    let now = Utc
+        .timestamp_millis_opt(now)
+        .single()
+        .context("analytics time is outside the supported range")?;
+    let end_date = now.with_timezone(&timezone).date_naive();
+    let start_date = end_date
+        .checked_sub_days(Days::new(days as u64))
+        .context("analytics time is outside the supported range")?;
+    Ok((
+        start_of_natural_day(timezone, start_date)?,
+        start_of_natural_day(timezone, end_date)?,
+    ))
+}
+
+fn exceeds_natural_days(start: i64, end: i64, timezone: &str, days: u64) -> Result<bool> {
+    let timezone = parse_timezone(timezone)?;
+    let start = Utc
+        .timestamp_millis_opt(start)
+        .single()
+        .context("start-time is outside the supported range")?
+        .with_timezone(&timezone);
+    let limit = start
+        .checked_add_days(Days::new(days))
+        .context("analytics time range could not be resolved in the requested timezone")?;
+    Ok(end > limit.timestamp_millis())
+}
+
+fn parse_timezone(value: &str) -> Result<Tz> {
+    value
+        .parse()
+        .map_err(|_| anyhow::anyhow!("timezone must be an IANA timezone name"))
+}
+
+fn start_of_natural_day(timezone: Tz, date: NaiveDate) -> Result<i64> {
+    let midnight = date
+        .and_hms_opt(0, 0, 0)
+        .context("analytics date is outside the supported range")?;
+    for minute in 0..=24 * 60 {
+        let local = midnight + ChronoDuration::minutes(minute);
+        match timezone.from_local_datetime(&local) {
+            LocalResult::Single(value) => return Ok(value.timestamp_millis()),
+            LocalResult::Ambiguous(first, second) => {
+                return Ok(first.min(second).timestamp_millis())
+            }
+            LocalResult::None => {}
+        }
+    }
+    anyhow::bail!("analytics natural-day boundary could not be resolved")
 }
 
 fn now_millis() -> Result<i64> {
@@ -381,7 +449,7 @@ fn print_table(headers: &[&str], rows: Vec<Vec<String>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::{AnalyticsMessageType, AnalyticsRangeArgs};
+    use crate::cli::{AnalyticsMessageType, AnalyticsPreset, AnalyticsRangeArgs};
 
     fn args() -> AnalyticsFilterArgs {
         AnalyticsFilterArgs {
@@ -411,5 +479,43 @@ mod tests {
         let mut args = args();
         args.range.end_time = Some(90 * 24 * 60 * 60 * 1_000 + 1);
         assert!(request(&args).unwrap_err().to_string().contains("90 days"));
+    }
+
+    #[test]
+    fn preset_uses_completed_natural_days_in_requested_timezone() {
+        let mut args = args();
+        args.range.start_time = None;
+        args.range.end_time = None;
+        args.preset = Some(AnalyticsPreset::Last7Days);
+        args.timezone = "Asia/Shanghai".to_string();
+        let now = Utc
+            .with_ymd_and_hms(2026, 7, 29, 10, 30, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis();
+
+        let request = request_at(&args, now).unwrap();
+
+        assert_eq!(request.start_time, "2026-07-21T16:00:00.000Z");
+        assert_eq!(request.end_time, "2026-07-28T16:00:00.000Z");
+    }
+
+    #[test]
+    fn preset_counts_natural_days_across_daylight_saving_time() {
+        let mut args = args();
+        args.range.start_time = None;
+        args.range.end_time = None;
+        args.preset = Some(AnalyticsPreset::Last7Days);
+        args.timezone = "America/New_York".to_string();
+        let now = Utc
+            .with_ymd_and_hms(2026, 11, 5, 12, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis();
+
+        let request = request_at(&args, now).unwrap();
+
+        assert_eq!(request.start_time, "2026-10-29T04:00:00.000Z");
+        assert_eq!(request.end_time, "2026-11-05T05:00:00.000Z");
     }
 }
