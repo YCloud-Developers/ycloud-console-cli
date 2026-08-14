@@ -667,7 +667,11 @@ pub struct AnalyticsFilterArgs {
     #[command(flatten)]
     pub range: AnalyticsRangeArgs,
 
-    #[arg(long, value_enum, help = "Use a trailing 7, 30, 60, or 90 day preset")]
+    #[arg(
+        long,
+        value_enum,
+        help = "Use the previous 7, 30, 60, or 90 completed natural days"
+    )]
     pub preset: Option<AnalyticsPreset>,
 
     #[arg(

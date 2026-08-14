@@ -118,7 +118,7 @@ isolated background runtime budget. When Campaign JSONL parts are downloaded, th
 downloads the manifest, verifies every part's size and SHA-256, and rejects missing, duplicate, or
 non-contiguous parts. Task cancellation is intentionally not exposed by this CLI capability.
 
-Analytics commands default to the last 7 days and accept at most 90 natural days. Ranges up to 30 days use daily trend buckets; larger ranges use weekly buckets. Delivery rate is calculated from the aggregated delivered and total counts, and an empty denominator is printed as `-` in tables and `null` in JSON.
+Analytics commands default to the previous 7 completed natural days in the requested IANA timezone and accept at most 90 natural days. Presets end at the start of the current local day. Ranges up to 30 days use daily trend buckets; larger ranges use weekly buckets. Delivery rate is calculated from the aggregated delivered and total counts, and an empty denominator is printed as `-` in tables and `null` in JSON.
 
 Template statistics use the Dashboard's fixed page size of 10. Message-type rows contain total, delivered, and weighted delivery rate; failed and processing counts are available only for each overall trend bucket.
 
