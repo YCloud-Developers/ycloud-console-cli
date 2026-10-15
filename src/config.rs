@@ -20,6 +20,8 @@ pub struct DashboardConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuthConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<OAuthSession>,
     pub token_type: String,
     pub access_token: String,
     pub refresh_token: String,
@@ -27,6 +29,28 @@ pub struct AuthConfig {
     pub requested_permissions: Vec<String>,
     pub tenant_id: Option<String>,
     pub user_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OAuthSession {
+    #[serde(default = "legacy_oauth_version")]
+    pub version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub business_base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_endpoint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revocation_endpoint: Option<String>,
+    #[serde(default)]
+    pub refresh_uncertain: bool,
+    pub issuer: String,
+    pub client_id: String,
+    pub resource: String,
+    pub access_expires_at: u64,
+}
+
+fn legacy_oauth_version() -> u32 {
+    1
 }
 
 impl Config {
@@ -127,6 +151,7 @@ mod tests {
                 base_url: "http://127.0.0.1:8036".to_string(),
             },
             auth: AuthConfig {
+                oauth: None,
                 token_type: "Bearer".to_string(),
                 access_token: "YCLI.access".to_string(),
                 refresh_token: "YCLI.refresh".to_string(),

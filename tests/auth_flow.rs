@@ -57,6 +57,11 @@ async fn token_exchange_uses_backend_contract_and_saves_config_shape() {
         &client,
         &config_path,
         ycloud_console_cli::cli::LoginArgs {
+            oauth: false,
+            oauth_issuer: None,
+            oauth_client_id: None,
+            oauth_resource: None,
+            no_browser: false,
             profile: ycloud_console_cli::cli::PermissionProfile::Basic,
             permissions: vec![],
             code: Some("code-1".to_string()),
@@ -111,6 +116,7 @@ async fn refresh_rotates_stored_tokens() {
             base_url: server.uri(),
         },
         auth: ycloud_console_cli::config::AuthConfig {
+            oauth: None,
             token_type: "Bearer".to_string(),
             access_token: "YCLI.old-access".to_string(),
             refresh_token: "YCLI.old-refresh".to_string(),
@@ -171,6 +177,7 @@ async fn contacts_list_calls_stable_v1_endpoint() {
             base_url: server.uri(),
         },
         auth: ycloud_console_cli::config::AuthConfig {
+            oauth: None,
             token_type: "Bearer".to_string(),
             access_token: "YCLI.access".to_string(),
             refresh_token: "YCLI.refresh".to_string(),
@@ -564,6 +571,7 @@ fn saved_config(base_url: String) -> ycloud_console_cli::config::Config {
     ycloud_console_cli::config::Config {
         dashboard: ycloud_console_cli::config::DashboardConfig { base_url },
         auth: ycloud_console_cli::config::AuthConfig {
+            oauth: None,
             token_type: "Bearer".to_string(),
             access_token: "YCLI.access".to_string(),
             refresh_token: "YCLI.refresh".to_string(),

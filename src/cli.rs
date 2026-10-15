@@ -132,6 +132,26 @@ pub enum AnalyticsCommand {
 
 #[derive(Debug, Args, Clone)]
 pub struct LoginArgs {
+    #[arg(
+        long,
+        help = "Use standard OAuth discovery and PKCE browser consent (opt-in trial)"
+    )]
+    pub oauth: bool,
+
+    #[arg(long, requires = "oauth", help = "Trusted OAuth issuer origin")]
+    pub oauth_issuer: Option<String>,
+    #[arg(long, requires = "oauth", help = "Registered public OAuth client ID")]
+    pub oauth_client_id: Option<String>,
+    #[arg(
+        long,
+        requires = "oauth",
+        help = "CLI resource URI bound to the business origin"
+    )]
+    pub oauth_resource: Option<String>,
+
+    #[arg(long, help = "Print the authorization URL without opening the browser")]
+    pub no_browser: bool,
+
     #[arg(long, value_enum, default_value_t = PermissionProfile::Basic)]
     pub profile: PermissionProfile,
 

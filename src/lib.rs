@@ -5,6 +5,7 @@ pub mod cli;
 pub mod config;
 pub mod export;
 pub mod http;
+pub mod oauth;
 pub mod permissions;
 pub mod pkce;
 pub mod waba_assignment;
@@ -36,10 +37,15 @@ pub async fn run() -> Result<()> {
             };
             let config = Config::load(&config_path)
                 .context("failed to load the current permissions for reauthorization")?;
-            let Some(plan) = permissions::plan(&cli, &config.auth.requested_permissions, api_error)
+            let Some(mut plan) =
+                permissions::plan(&cli, &config.auth.requested_permissions, api_error)
             else {
                 return Err(error);
             };
+
+            if config.auth.oauth.is_some() {
+                plan.login_command.push_str(" --oauth");
+            }
 
             eprintln!(
                 "Permission denied (requestId={}, traceId={}).",
@@ -74,7 +80,8 @@ pub async fn run() -> Result<()> {
             }
 
             let client =
-                client_for_saved_profile(cli.dashboard_url.clone(), &config_path, invocation_mode)?;
+                client_for_saved_profile(cli.dashboard_url.clone(), &config_path, invocation_mode)
+                    .await?;
             auth::reauthorize(&client, &config_path, plan.requested_permissions).await?;
             match execute_once(&cli, &config_path, invocation_mode).await {
                 Err(retry_error) => {
@@ -110,20 +117,23 @@ async fn execute_once(
             auth::login(&client, config_path, args.clone()).await
         }
         Command::Whoami => {
-            let client = saved_client(cli, config_path, invocation_mode)?;
+            let client = saved_client(cli, config_path, invocation_mode).await?;
             auth::whoami(&client, config_path).await
         }
         Command::Analytics { command } => {
             let client = match command {
                 AnalyticsCommand::Overview(_)
                 | AnalyticsCommand::Trend(_)
-                | AnalyticsCommand::Templates { .. } => saved_client_with_timeout(
-                    cli,
-                    config_path,
-                    invocation_mode,
-                    std::time::Duration::from_secs(30),
-                )?,
-                _ => saved_client(cli, config_path, invocation_mode)?,
+                | AnalyticsCommand::Templates { .. } => {
+                    saved_client_with_timeout(
+                        cli,
+                        config_path,
+                        invocation_mode,
+                        std::time::Duration::from_secs(30),
+                    )
+                    .await?
+                }
+                _ => saved_client(cli, config_path, invocation_mode).await?,
             };
             match command {
                 AnalyticsCommand::Outline(args) => {
@@ -152,7 +162,7 @@ async fn execute_once(
             }
         }
         Command::Contacts { command } => {
-            let client = saved_client(cli, config_path, invocation_mode)?;
+            let client = saved_client(cli, config_path, invocation_mode).await?;
             match command {
                 ContactsCommand::List(args) => {
                     auth::contacts_list(&client, config_path, args.clone()).await
@@ -167,7 +177,7 @@ async fn execute_once(
             }
         }
         Command::Campaign { command } => {
-            let client = saved_client(cli, config_path, invocation_mode)?;
+            let client = saved_client(cli, config_path, invocation_mode).await?;
             match command {
                 CampaignCommand::List(args) => {
                     campaign::list(&client, config_path, args.clone()).await
@@ -184,7 +194,7 @@ async fn execute_once(
             }
         }
         Command::Whatsapp { command } => {
-            let client = saved_client(cli, config_path, invocation_mode)?;
+            let client = saved_client(cli, config_path, invocation_mode).await?;
             match command {
                 WhatsappCommand::WabaAssignment { command } => match command {
                     WabaAssignmentCommand::List(args) => {
@@ -194,7 +204,7 @@ async fn execute_once(
             }
         }
         Command::Inbox { command } => {
-            let client = saved_client(cli, config_path, invocation_mode)?;
+            let client = saved_client(cli, config_path, invocation_mode).await?;
             match command {
                 InboxCommand::Conversations { command } => match command {
                     InboxConversationsCommand::Search(args) => {
@@ -207,7 +217,7 @@ async fn execute_once(
             }
         }
         Command::Exports { command } => {
-            let client = saved_client(cli, config_path, invocation_mode)?;
+            let client = saved_client(cli, config_path, invocation_mode).await?;
             match command {
                 ExportsCommand::Query(args) => {
                     export::query_export(&client, config_path, args.clone()).await
@@ -223,57 +233,102 @@ async fn execute_once(
         Command::Integrations {
             command: IntegrationsCommand::Status,
         } => {
-            let client = saved_client(cli, config_path, invocation_mode)?;
+            let client = saved_client(cli, config_path, invocation_mode).await?;
             auth::integrations_status(&client, config_path).await
         }
         Command::Tenants {
             command: TenantsCommand::List,
         } => {
-            let client = saved_client(cli, config_path, invocation_mode)?;
+            let client = saved_client(cli, config_path, invocation_mode).await?;
             auth::tenants_list(&client, config_path).await
         }
         Command::Refresh => {
-            let client = saved_client(cli, config_path, invocation_mode)?;
+            let client = saved_client(cli, config_path, invocation_mode).await?;
             auth::refresh(&client, config_path).await
         }
         Command::Logout => {
-            let client = saved_client(cli, config_path, invocation_mode)?;
+            let client = client_for_logout(cli, config_path, invocation_mode)?;
             auth::logout(&client, config_path).await
         }
     }
 }
 
-fn saved_client(
+fn client_for_logout(
+    cli: &Cli,
+    config_path: &Path,
+    mode: InvocationMode,
+) -> Result<http::DashboardClient> {
+    let config = Config::load(config_path)?;
+    let base = cli
+        .dashboard_url
+        .as_deref()
+        .unwrap_or(&config.dashboard.base_url);
+    if let Some(session) = &config.auth.oauth {
+        if base != config.dashboard.base_url {
+            anyhow::bail!("OAuth business address override changed; log in again");
+        }
+        oauth::OAuthClient::configured(
+            &session.issuer,
+            &session.client_id,
+            &session.resource,
+            base,
+        )?
+        .require_session(session)?;
+    }
+    // Discovery/remote failures are handled inside logout so local cleanup still happens.
+    http::DashboardClient::new_with_mode(base.to_string(), mode)
+}
+
+async fn saved_client(
     cli: &Cli,
     config_path: &Path,
     invocation_mode: InvocationMode,
 ) -> Result<http::DashboardClient> {
-    client_for_saved_profile(cli.dashboard_url.clone(), config_path, invocation_mode)
+    client_for_saved_profile(cli.dashboard_url.clone(), config_path, invocation_mode).await
 }
 
-fn saved_client_with_timeout(
+async fn saved_client_with_timeout(
     cli: &Cli,
     config_path: &Path,
     invocation_mode: InvocationMode,
     timeout: std::time::Duration,
 ) -> Result<http::DashboardClient> {
-    let dashboard_url = match cli.dashboard_url.clone() {
-        Some(url) => url,
-        None => Config::load(config_path)?.dashboard.base_url,
-    };
-    http::DashboardClient::new_with_mode_and_timeout(dashboard_url, invocation_mode, timeout)
+    let dashboard_url = saved_dashboard_url(cli.dashboard_url.clone(), config_path).await?;
+    bind_saved_client(
+        http::DashboardClient::new_with_mode_and_timeout(dashboard_url, invocation_mode, timeout)?,
+        config_path,
+    )
 }
 
-fn client_for_saved_profile(
+async fn client_for_saved_profile(
     override_url: Option<String>,
     config_path: &Path,
     invocation_mode: InvocationMode,
 ) -> Result<http::DashboardClient> {
-    let dashboard_url = match override_url {
-        Some(url) => url,
-        None => Config::load(config_path)?.dashboard.base_url,
-    };
-    http::DashboardClient::new_with_mode(dashboard_url, invocation_mode)
+    let dashboard_url = saved_dashboard_url(override_url, config_path).await?;
+    bind_saved_client(
+        http::DashboardClient::new_with_mode(dashboard_url, invocation_mode)?,
+        config_path,
+    )
+}
+
+fn bind_saved_client(
+    client: http::DashboardClient,
+    config_path: &Path,
+) -> Result<http::DashboardClient> {
+    match Config::load(config_path)?.auth.oauth {
+        Some(session) => client.bind_oauth(&session.resource),
+        None => Ok(client),
+    }
+}
+
+async fn saved_dashboard_url(override_url: Option<String>, config_path: &Path) -> Result<String> {
+    let mut config = Config::load(config_path)?;
+    let url = override_url.unwrap_or_else(|| config.dashboard.base_url.clone());
+    if config.auth.oauth.is_some() {
+        oauth::prepare_session(&mut config, config_path, &url).await?;
+    }
+    Ok(url)
 }
 
 fn preserve_idempotency_key(command: &mut Command) {

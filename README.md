@@ -25,6 +25,39 @@
 
 Manual copy-paste authorization code input is still available with `ycloud login --manual` for terminals that cannot receive a localhost browser callback.
 
+## Standard OAuth trial
+
+The development build supports the unified OAuth server without changing existing profiles:
+
+```bash
+ycloud --dashboard-url https://www-test-indigo.ycloud.com --config /tmp/ycloud-oauth-test.toml login --oauth --profile basic
+ycloud --config /tmp/ycloud-oauth-test.toml whoami
+ycloud --config /tmp/ycloud-oauth-test.toml refresh
+ycloud --config /tmp/ycloud-oauth-test.toml logout
+```
+
+`--oauth` discovers the authorization server and `/api/cli` resource metadata, uses the
+pre-registered public client `ycloud-console-cli`, and validates PKCE, state and callback
+issuer. The localhost callback is `http://127.0.0.1:<random-port>/oauth/callback`.
+`--no-browser` prints the URL while retaining the callback listener. Standard OAuth does
+not support manual code pasting or scripted `--code`/`--state`/`--code-verifier` overrides.
+
+The test ingress must forward `/.well-known/oauth-authorization-server` and
+`/.well-known/oauth-protected-resource/api/cli`, plus `/api/oauth/v1/`, to `ycloud-open-platform:8080`. MCP resource discovery is
+independent and is not required for this CLI trial. HTTPS is required except for
+127.0.0.1 mock servers with the explicit `YCLOUD_OAUTH_TEST_LOOPBACK=1` switch. Default login remains the legacy protocol until the standard
+server is available in every supported environment; standard failures never fall back.
+
+OAuth options `--oauth-issuer`, `--oauth-client-id`, and `--oauth-resource` separate the trusted authorization server from the business origin supplied with `--dashboard-url`. Defaults retain the current same-origin CLI resource.
+
+Saved version 2 standard sessions bind issuer, client, resource, business origin and discovered token/revoke endpoints. Endpoints must use the issuer origin; business requests must remain under `/api/cli/`. Redirects and environment proxies are disabled for standard OAuth and its business calls. Old trial sessions upgrade only after same-origin trusted discovery, retaining the original grant. Unsupported or inconsistent versions require a new login.
+
+Saved standard sessions bind issuer, client and resource. Business commands reject a
+foreign `--dashboard-url`, and refresh/logout select the saved protocol. Refresh atomically
+replaces the token pair and rejects scope expansion; code exchange and rotation are not
+retried. Before rotation, the CLI atomically marks its result as unconfirmed; an interruption requires a new login instead of reusing the old refresh token. Logout removes local credentials even if the server cannot confirm revocation, reports that distinction, and directs the user to YCloud authorization management. Existing legacy profiles continue
+to use their old refresh/revoke endpoints. No npm/Homebrew release is part of this trial.
+
 ## Installation
 
 Install the CLI with npm (Node.js 18 or later):
