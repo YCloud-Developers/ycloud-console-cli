@@ -11,6 +11,10 @@ fn local_client(server: &MockServer) -> anyhow::Result<OAuthClient> {
 }
 
 async fn discovery(server: &MockServer) {
+    discovery_for_resource(server, &format!("{}/api/cli", server.uri())).await;
+}
+
+async fn discovery_for_resource(server: &MockServer, resource: &str) {
     std::env::set_var("YCLOUD_OAUTH_TEST_LOOPBACK", "1");
     let issuer = server.uri();
     Mock::given(method("GET"))
@@ -30,10 +34,44 @@ async fn discovery(server: &MockServer) {
         .await;
     Mock::given(method("GET")).and(path("/.well-known/oauth-protected-resource/api/cli"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "resource":format!("{issuer}/api/cli"), "authorization_servers":[issuer],
+            "resource":resource, "authorization_servers":[issuer],
             "scopes_supported":["yc.identity.current.read", "yc.tenant.list.read", "yc.contact.metadata.read"],
             "bearer_methods_supported":["header"]
         }))).mount(server).await;
+}
+
+#[tokio::test]
+async fn separate_issuer_publishes_web_resource_without_business_discovery() {
+    let issuer = MockServer::start().await;
+    let business = MockServer::start().await;
+    let resource = format!("{}/api/cli", business.uri());
+    discovery_for_resource(&issuer, &resource).await;
+    let client = OAuthClient::configured(
+        &issuer.uri(),
+        "ycloud-console-cli",
+        &resource,
+        &business.uri(),
+    )
+    .unwrap();
+    let metadata = client.discover().await.unwrap();
+    let pair = pkce::generate_pkce_pair();
+    let target = client
+        .authorize_url(
+            &metadata,
+            &["yc.identity.current.read".to_string()],
+            "state-fixture",
+            &pair,
+            "http://127.0.0.1:12345/oauth/callback",
+        )
+        .unwrap();
+    assert_eq!(
+        target.origin(),
+        url::Url::parse(&issuer.uri()).unwrap().origin()
+    );
+    assert!(target
+        .query_pairs()
+        .any(|(k, v)| k == "resource" && v == resource));
+    assert!(business.received_requests().await.unwrap().is_empty());
 }
 
 #[tokio::test]

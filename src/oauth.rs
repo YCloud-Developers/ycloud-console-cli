@@ -182,7 +182,7 @@ impl OAuthClient {
             self.http
                 .get(format!(
                     "{}/.well-known/oauth-protected-resource/api/cli",
-                    self.business_base
+                    self.issuer
                 ))
                 .send()
                 .await

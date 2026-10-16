@@ -50,6 +50,8 @@ server is available in every supported environment; standard failures never fall
 
 OAuth options `--oauth-issuer`, `--oauth-client-id`, and `--oauth-resource` separate the trusted authorization server from the business origin supplied with `--dashboard-url`. Defaults retain the current same-origin CLI resource.
 
+Both metadata documents are fetched from the explicit trusted issuer. With separate domains, set `--dashboard-url` to the existing Web origin, `--oauth-issuer` to the OAuth service origin, and `--oauth-resource` to `<web-origin>/api/cli`. The Web domain needs no new discovery route.
+
 Saved version 2 standard sessions bind issuer, client, resource, business origin and discovered token/revoke endpoints. Endpoints must use the issuer origin; business requests must remain under `/api/cli/`. Redirects and environment proxies are disabled for standard OAuth and its business calls. Old trial sessions upgrade only after same-origin trusted discovery, retaining the original grant. Unsupported or inconsistent versions require a new login.
 
 Saved standard sessions bind issuer, client and resource. Business commands reject a
