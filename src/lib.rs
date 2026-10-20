@@ -295,11 +295,13 @@ async fn saved_client_with_timeout(
     invocation_mode: InvocationMode,
     timeout: std::time::Duration,
 ) -> Result<http::DashboardClient> {
-    let dashboard_url = saved_dashboard_url(cli.dashboard_url.clone(), config_path).await?;
-    bind_saved_client(
-        http::DashboardClient::new_with_mode_and_timeout(dashboard_url, invocation_mode, timeout)?,
+    saved_profile_client(
+        cli.dashboard_url.clone(),
         config_path,
+        invocation_mode,
+        Some(timeout),
     )
+    .await
 }
 
 async fn client_for_saved_profile(
@@ -307,30 +309,32 @@ async fn client_for_saved_profile(
     config_path: &Path,
     invocation_mode: InvocationMode,
 ) -> Result<http::DashboardClient> {
-    let dashboard_url = saved_dashboard_url(override_url, config_path).await?;
-    bind_saved_client(
-        http::DashboardClient::new_with_mode(dashboard_url, invocation_mode)?,
-        config_path,
-    )
+    saved_profile_client(override_url, config_path, invocation_mode, None).await
 }
 
-fn bind_saved_client(
-    client: http::DashboardClient,
+async fn saved_profile_client(
+    override_url: Option<String>,
     config_path: &Path,
+    invocation_mode: InvocationMode,
+    timeout: Option<std::time::Duration>,
 ) -> Result<http::DashboardClient> {
-    match Config::load(config_path)?.auth.oauth {
-        Some(session) => client.bind_oauth(&session.resource),
-        None => Ok(client),
-    }
-}
-
-async fn saved_dashboard_url(override_url: Option<String>, config_path: &Path) -> Result<String> {
+    let _guard = config::lock_profile(config_path).await?;
     let mut config = Config::load(config_path)?;
     let url = override_url.unwrap_or_else(|| config.dashboard.base_url.clone());
     if config.auth.oauth.is_some() {
-        oauth::prepare_session(&mut config, config_path, &url).await?;
+        oauth::prepare_session_locked(&mut config, config_path, &url).await?;
     }
-    Ok(url)
+    let client = match timeout {
+        Some(timeout) => {
+            http::DashboardClient::new_with_mode_and_timeout(url, invocation_mode, timeout)?
+        }
+        None => http::DashboardClient::new_with_mode(url, invocation_mode)?,
+    };
+    let client = match &config.auth.oauth {
+        Some(session) => client.bind_oauth(&session.resource)?,
+        None => client,
+    };
+    Ok(client.bind_profile(&config.auth.access_token, &config.auth.refresh_token))
 }
 
 fn preserve_idempotency_key(command: &mut Command) {
@@ -382,6 +386,60 @@ fn is_confirmation(answer: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn replaced_profile_cannot_send_new_credentials_through_old_client() {
+        use crate::config::{AuthConfig, DashboardConfig, OAuthSession};
+        let server = wiremock::MockServer::start().await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profile.toml");
+        let mut config = Config {
+            dashboard: DashboardConfig {
+                base_url: server.uri(),
+            },
+            auth: AuthConfig {
+                oauth: None,
+                token_type: "Bearer".into(),
+                access_token: "fixture-old-access".into(),
+                refresh_token: "fixture-old-refresh".into(),
+                record_id: "fixture".into(),
+                requested_permissions: vec![],
+                tenant_id: None,
+                user_id: None,
+            },
+        };
+        config.save(&path).unwrap();
+        let client = client_for_saved_profile(None, &path, InvocationMode::Automation)
+            .await
+            .unwrap();
+        config.dashboard.base_url = "https://business.bound.example".into();
+        config.auth.access_token = "yc_oauth_at_fixture-new".into();
+        config.auth.refresh_token = "yc_oauth_rt_fixture-new".into();
+        config.auth.oauth = Some(OAuthSession {
+            version: 2,
+            business_base_url: Some(config.dashboard.base_url.clone()),
+            issuer: "https://auth.bound.example".into(),
+            client_id: "fixture".into(),
+            resource: "https://business.bound.example/api/cli".into(),
+            token_endpoint: Some("https://auth.bound.example/api/oauth/v1/token".into()),
+            revocation_endpoint: Some("https://auth.bound.example/api/oauth/v1/revoke".into()),
+            access_expires_at: 4_102_444_800,
+            refresh_uncertain: false,
+        });
+        config.save(&path).unwrap();
+        assert!(auth::whoami(&client, &path).await.is_err());
+        assert!(client
+            .contacts_metadata(&config.auth.access_token)
+            .await
+            .is_err());
+        assert!(client
+            .revoke(&config.auth.access_token, "fixture")
+            .await
+            .is_err());
+        assert!(client.refresh(&config.auth.refresh_token).await.is_err());
+        assert!(server.received_requests().await.unwrap().is_empty());
+        assert!(!format!("{client:?}").contains("fixture-old"));
+    }
 
     #[test]
     fn reauthorization_confirmation_defaults_to_no() {

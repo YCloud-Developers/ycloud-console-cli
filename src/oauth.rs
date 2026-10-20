@@ -535,7 +535,7 @@ pub async fn prepare_session(
     prepare_session_locked(config, config_path, business_base).await
 }
 
-async fn prepare_session_locked(
+pub(crate) async fn prepare_session_locked(
     config: &mut Config,
     config_path: &Path,
     business_base: &str,

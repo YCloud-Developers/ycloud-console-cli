@@ -27,6 +27,8 @@ use crate::{
 };
 
 pub async fn login(client: &DashboardClient, config_path: &Path, args: LoginArgs) -> Result<()> {
+    let authentication_client = client.authentication_client();
+    let client = &authentication_client;
     if args.oauth {
         return crate::oauth::login(client, config_path, args).await;
     }
@@ -463,8 +465,10 @@ pub async fn analytics_calling_logs(
 }
 
 pub async fn refresh(client: &DashboardClient, config_path: &Path) -> Result<()> {
+    let guard = crate::config::lock_profile(config_path).await?;
     let mut config = Config::load(config_path)?;
     if config.auth.oauth.is_some() {
+        drop(guard);
         return crate::oauth::refresh(client, config_path, config).await;
     }
     let token = client
@@ -483,8 +487,10 @@ pub async fn refresh(client: &DashboardClient, config_path: &Path) -> Result<()>
 }
 
 pub async fn logout(client: &DashboardClient, config_path: &Path) -> Result<()> {
+    let guard = crate::config::lock_profile(config_path).await?;
     let config = Config::load(config_path)?;
     if config.auth.oauth.is_some() {
+        drop(guard);
         return crate::oauth::logout(client, config_path, config).await;
     }
     let _ = client

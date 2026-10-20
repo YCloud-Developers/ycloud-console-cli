@@ -61,7 +61,7 @@ Both metadata documents are fetched from the explicit trusted issuer. With separ
 
 Saved version 2 standard sessions bind issuer, client, resource, business origin and discovered token/revoke endpoints. Endpoints must use the issuer origin; business requests must remain under `/api/cli/`. Redirects and environment proxies are disabled for standard OAuth and its business calls. Old trial sessions upgrade only after same-origin trusted discovery, retaining the original grant. Unsupported or inconsistent versions require a new login.
 
-Standard profile updates are serialized across local processes. A failed or unknown refresh still requires a new login instead of retrying the old refresh token. Permission-recovery commands preserve the saved Web origin, issuer, client and resource. Source builds require Rust 1.89 or later.
+Standard profile updates are serialized across local processes. A failed or unknown refresh still requires a new login instead of retrying the old refresh token. Permission-recovery commands preserve the saved Web origin, issuer, client and resource. Business clients bind their address and credential snapshot under the same profile lock. A replaced profile cannot send its credentials through an older client; retry the command after a profile change. Source builds require Rust 1.89 or later.
 
 Saved standard sessions bind issuer, client and resource. Business commands reject a
 foreign `--dashboard-url`, and refresh/logout select the saved protocol. Refresh atomically

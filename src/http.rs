@@ -18,9 +18,22 @@ pub struct DashboardClient {
     http: reqwest::Client,
     base_url: Url,
     oauth_resource: Option<Url>,
+    profile_binding: Option<ProfileBinding>,
     timeout: Duration,
     invocation_id: String,
     invocation_mode: InvocationMode,
+}
+
+#[derive(Clone)]
+struct ProfileBinding {
+    access: [u8; 32],
+    refresh: [u8; 32],
+}
+
+impl fmt::Debug for ProfileBinding {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("ProfileBinding([redacted])")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,10 +118,25 @@ impl DashboardClient {
                 .context("failed to build dashboard HTTP client")?,
             base_url: parsed,
             oauth_resource: None,
+            profile_binding: None,
             timeout,
             invocation_id: random_identifier("inv"),
             invocation_mode,
         })
+    }
+
+    pub(crate) fn authentication_client(&self) -> Self {
+        let mut client = self.clone();
+        client.profile_binding = None;
+        client
+    }
+
+    pub(crate) fn bind_profile(mut self, access: &str, refresh: &str) -> Self {
+        self.profile_binding = Some(ProfileBinding {
+            access: Sha256::digest(access.as_bytes()).into(),
+            refresh: Sha256::digest(refresh.as_bytes()).into(),
+        });
+        self
     }
 
     pub fn bind_oauth(mut self, resource: &str) -> Result<Self> {
@@ -179,6 +207,11 @@ impl DashboardClient {
     }
 
     pub async fn refresh(&self, refresh_token: &str) -> Result<ApiEnvelope<TokenData>> {
+        if let Some(binding) = &self.profile_binding {
+            if binding.refresh != <[u8; 32]>::from(Sha256::digest(refresh_token.as_bytes())) {
+                anyhow::bail!("Saved profile changed; retry the command with the current profile");
+            }
+        }
         self.post_json(
             "/api/cli/auth/refresh",
             None,
@@ -698,6 +731,11 @@ impl DashboardClient {
     }
 
     fn attempt_headers(&self, token: Option<&str>) -> Result<HeaderMap> {
+        if let (Some(binding), Some(token)) = (&self.profile_binding, token) {
+            if binding.access != <[u8; 32]>::from(Sha256::digest(token.as_bytes())) {
+                anyhow::bail!("Saved profile changed; retry the command with the current profile");
+            }
+        }
         headers(
             token,
             &random_identifier("req"),
