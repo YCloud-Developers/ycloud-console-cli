@@ -20,6 +20,8 @@ pub struct DashboardConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuthConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<OAuthSession>,
     pub token_type: String,
     pub access_token: String,
     pub refresh_token: String,
@@ -27,6 +29,63 @@ pub struct AuthConfig {
     pub requested_permissions: Vec<String>,
     pub tenant_id: Option<String>,
     pub user_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OAuthSession {
+    #[serde(default = "legacy_oauth_version")]
+    pub version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub business_base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_endpoint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revocation_endpoint: Option<String>,
+    #[serde(default)]
+    pub refresh_uncertain: bool,
+    pub issuer: String,
+    pub client_id: String,
+    pub resource: String,
+    pub access_expires_at: u64,
+}
+
+fn legacy_oauth_version() -> u32 {
+    1
+}
+
+/// A stable sidecar inode serializes profile read/rotate/write across processes.
+/// Keep the empty lock file after releasing it: deleting it could split waiters
+/// across different inodes while another process still holds the old lock.
+pub struct ProfileLock {
+    _file: fs::File,
+}
+
+pub async fn lock_profile(path: &Path) -> Result<ProfileLock> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || -> Result<ProfileLock> {
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            fs::create_dir_all(parent).context("failed to create profile lock directory")?;
+        }
+        let name = path.file_name().context("profile path has no filename")?;
+        let mut lock_name = std::ffi::OsString::from(".");
+        lock_name.push(name);
+        lock_name.push(".lock");
+        let lock_path = path.with_file_name(lock_name);
+        let mut options = fs::OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options
+            .open(lock_path)
+            .context("failed to open profile lock")?;
+        file.lock().context("failed to lock profile")?;
+        Ok(ProfileLock { _file: file })
+    })
+    .await
+    .context("profile lock task failed")?
 }
 
 impl Config {
@@ -127,6 +186,7 @@ mod tests {
                 base_url: "http://127.0.0.1:8036".to_string(),
             },
             auth: AuthConfig {
+                oauth: None,
                 token_type: "Bearer".to_string(),
                 access_token: "YCLI.access".to_string(),
                 refresh_token: "YCLI.refresh".to_string(),

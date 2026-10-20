@@ -25,6 +25,53 @@
 
 Manual copy-paste authorization code input is still available with `ycloud login --manual` for terminals that cannot receive a localhost browser callback.
 
+## Standard OAuth
+
+Version 0.3.0 supports the unified OAuth server through `login --oauth` without changing existing profiles:
+
+```bash
+ycloud --dashboard-url https://www.ycloud.com \
+  --config /tmp/ycloud-oauth.toml login --oauth --profile basic \
+  --oauth-issuer https://open-platform.ycloud.com \
+  --oauth-resource https://www.ycloud.com/api/cli
+ycloud --config /tmp/ycloud-oauth.toml whoami
+ycloud --config /tmp/ycloud-oauth.toml refresh
+ycloud --config /tmp/ycloud-oauth.toml logout
+```
+
+`--oauth` discovers the authorization server and `/api/cli` resource metadata, uses the
+pre-registered public client `ycloud-console-cli`, and validates PKCE, state and callback
+issuer. The localhost callback is `http://127.0.0.1:<random-port>/oauth/callback`.
+`--no-browser` prints the URL while retaining the callback listener. Standard OAuth does
+not support manual code pasting or scripted `--code`/`--state`/`--code-verifier` overrides.
+
+The local callback displays a self-contained YCloud result page in English or Chinese,
+with light/dark appearance and an explicit manual-close hint. Browser authorization
+completion is separate from token exchange: wait for the CLI's login success message in
+the originating terminal. The callback page does not infer a desktop application or launch
+an arbitrary URI. Close the browser tab manually after checking the terminal. The CLI must
+remain running while authorization is in progress; its callback wait expires after 300 seconds.
+
+The OAuth service ingress must forward `/.well-known/oauth-authorization-server` and
+`/.well-known/oauth-protected-resource/api/cli`, plus `/api/oauth/v1/`, to `ycloud-open-platform:8080`. MCP resource discovery is
+independent and is not required for CLI authorization. HTTPS is required except for
+127.0.0.1 mock servers with the explicit `YCLOUD_OAUTH_TEST_LOOPBACK=1` switch. Default login remains the legacy protocol until the standard
+server is available in every supported environment; standard failures never fall back.
+
+OAuth options `--oauth-issuer`, `--oauth-client-id`, and `--oauth-resource` separate the trusted authorization server from the business origin supplied with `--dashboard-url`. Defaults retain the current same-origin CLI resource.
+
+Both metadata documents are fetched from the explicit trusted issuer. With separate domains, set `--dashboard-url` to the existing Web origin, `--oauth-issuer` to the OAuth service origin, and `--oauth-resource` to `<web-origin>/api/cli`. The Web domain needs no new discovery route.
+
+Saved version 2 standard sessions bind issuer, client, resource, business origin and discovered token/revoke endpoints. Endpoints must use the issuer origin; business requests must remain under `/api/cli/`. Redirects and environment proxies are disabled for standard OAuth and its business calls. Old trial sessions upgrade only after same-origin trusted discovery, retaining the original grant. Unsupported or inconsistent versions require a new login.
+
+Standard profile updates are serialized across local processes. A failed or unknown refresh still requires a new login instead of retrying the old refresh token. Permission-recovery commands preserve the saved Web origin, issuer, client and resource. Business clients bind their address and credential snapshot under the same profile lock. A replaced profile cannot send its credentials through an older client; retry the command after a profile change. Source builds require Rust 1.89 or later.
+
+Saved standard sessions bind issuer, client and resource. Business commands reject a
+foreign `--dashboard-url`, and refresh/logout select the saved protocol. Refresh atomically
+replaces the token pair and rejects scope expansion; code exchange and rotation are not
+retried. Before rotation, the CLI atomically marks its result as unconfirmed; an interruption requires a new login instead of reusing the old refresh token. Logout removes local credentials even if the server cannot confirm revocation, reports that distinction, and directs the user to YCloud authorization management. Existing legacy profiles continue
+to use their old refresh/revoke endpoints. Version 0.3.0 is distributed through the existing npm and Homebrew channels.
+
 ## Installation
 
 Install the CLI with npm (Node.js 18 or later):

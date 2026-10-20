@@ -17,9 +17,23 @@ use crate::waba_assignment::{AssignmentRule, PhoneAssignment, PhoneIdsSearchRequ
 pub struct DashboardClient {
     http: reqwest::Client,
     base_url: Url,
+    oauth_resource: Option<Url>,
+    profile_binding: Option<ProfileBinding>,
     timeout: Duration,
     invocation_id: String,
     invocation_mode: InvocationMode,
+}
+
+#[derive(Clone)]
+struct ProfileBinding {
+    access: [u8; 32],
+    refresh: [u8; 32],
+}
+
+impl fmt::Debug for ProfileBinding {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("ProfileBinding([redacted])")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,10 +117,46 @@ impl DashboardClient {
                 .build()
                 .context("failed to build dashboard HTTP client")?,
             base_url: parsed,
+            oauth_resource: None,
+            profile_binding: None,
             timeout,
             invocation_id: random_identifier("inv"),
             invocation_mode,
         })
+    }
+
+    pub(crate) fn authentication_client(&self) -> Self {
+        let mut client = self.clone();
+        client.profile_binding = None;
+        client
+    }
+
+    pub(crate) fn bind_profile(mut self, access: &str, refresh: &str) -> Self {
+        self.profile_binding = Some(ProfileBinding {
+            access: Sha256::digest(access.as_bytes()).into(),
+            refresh: Sha256::digest(refresh.as_bytes()).into(),
+        });
+        self
+    }
+
+    pub fn bind_oauth(mut self, resource: &str) -> Result<Self> {
+        let resource = Url::parse(resource).context("invalid OAuth business resource")?;
+        if resource.origin() != self.base_url.origin()
+            || resource.path() != "/api/cli"
+            || self.base_url.path() != "/"
+            || self.base_url.query().is_some()
+            || resource.query().is_some()
+            || resource.fragment().is_some()
+        {
+            anyhow::bail!("OAuth business client is outside the bound CLI resource");
+        }
+        self.http = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .build()
+            .context("failed to build OAuth business client")?;
+        self.oauth_resource = Some(resource);
+        Ok(self)
     }
 
     pub fn base_url(&self) -> String {
@@ -157,6 +207,11 @@ impl DashboardClient {
     }
 
     pub async fn refresh(&self, refresh_token: &str) -> Result<ApiEnvelope<TokenData>> {
+        if let Some(binding) = &self.profile_binding {
+            if binding.refresh != <[u8; 32]>::from(Sha256::digest(refresh_token.as_bytes())) {
+                anyhow::bail!("Saved profile changed; retry the command with the current profile");
+            }
+        }
         self.post_json(
             "/api/cli/auth/refresh",
             None,
@@ -536,9 +591,21 @@ impl DashboardClient {
     }
 
     fn join(&self, path: &str) -> Result<Url> {
-        self.base_url
+        let url = self
+            .base_url
             .join(path.trim_start_matches('/'))
-            .with_context(|| format!("failed to build dashboard api url for {path}"))
+            .with_context(|| format!("failed to build dashboard api url for {path}"))?;
+        if let Some(resource) = &self.oauth_resource {
+            if url.origin() != resource.origin()
+                || !url.path().starts_with("/api/cli/")
+                || url.path().contains('%')
+                || !url.username().is_empty()
+                || url.password().is_some()
+            {
+                anyhow::bail!("OAuth request is outside the bound CLI resource");
+            }
+        }
+        Ok(url)
     }
 
     async fn get_json_safe<T: DeserializeOwned>(
@@ -664,6 +731,11 @@ impl DashboardClient {
     }
 
     fn attempt_headers(&self, token: Option<&str>) -> Result<HeaderMap> {
+        if let (Some(binding), Some(token)) = (&self.profile_binding, token) {
+            if binding.access != <[u8; 32]>::from(Sha256::digest(token.as_bytes())) {
+                anyhow::bail!("Saved profile changed; retry the command with the current profile");
+            }
+        }
         headers(
             token,
             &random_identifier("req"),

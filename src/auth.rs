@@ -27,6 +27,11 @@ use crate::{
 };
 
 pub async fn login(client: &DashboardClient, config_path: &Path, args: LoginArgs) -> Result<()> {
+    let authentication_client = client.authentication_client();
+    let client = &authentication_client;
+    if args.oauth {
+        return crate::oauth::login(client, config_path, args).await;
+    }
     let profile = args.profile.as_str().to_string();
     let requested_permissions = args.permissions.clone();
     let pkce = match args.code_verifier {
@@ -71,9 +76,11 @@ pub async fn login(client: &DashboardClient, config_path: &Path, args: LoginArgs
             println!("Opening browser for Dashboard authorization:");
             println!("{authorize_url}");
             println!();
-            if let Err(error) = open_browser(authorize_url.as_str()) {
-                println!("Could not open browser automatically: {error:#}");
-                println!("Open the URL above in a logged-in Dashboard browser.");
+            if !args.no_browser {
+                if let Err(error) = open_browser(authorize_url.as_str()) {
+                    println!("Could not open browser automatically: {error:#}");
+                    println!("Open the URL above in a logged-in Dashboard browser.");
+                }
             }
             println!("Waiting for browser callback on localhost...");
             wait_for_callback(
@@ -95,6 +102,7 @@ pub async fn login(client: &DashboardClient, config_path: &Path, args: LoginArgs
             base_url: client.base_url(),
         },
         auth: AuthConfig {
+            oauth: None,
             token_type: token.token_type.clone(),
             access_token: token.access_token.clone(),
             refresh_token: token.refresh_token.clone(),
@@ -114,6 +122,7 @@ pub async fn login(client: &DashboardClient, config_path: &Path, args: LoginArgs
         config.auth.user_id = Some(identity.user_id);
     }
 
+    let _guard = crate::config::lock_profile(config_path).await?;
     config.save(config_path)?;
     println!(
         "Login succeeded. Profile saved at {}.",
@@ -127,10 +136,16 @@ pub async fn reauthorize(
     config_path: &Path,
     requested_permissions: Vec<String>,
 ) -> Result<()> {
+    let current = Config::load(config_path)?;
     login(
         client,
         config_path,
         LoginArgs {
+            oauth: current.auth.oauth.is_some(),
+            oauth_issuer: current.auth.oauth.as_ref().map(|s| s.issuer.clone()),
+            oauth_client_id: current.auth.oauth.as_ref().map(|s| s.client_id.clone()),
+            oauth_resource: current.auth.oauth.as_ref().map(|s| s.resource.clone()),
+            no_browser: false,
             profile: PermissionProfile::Custom,
             permissions: requested_permissions,
             code: None,
@@ -247,7 +262,7 @@ fn write_callback_response(stream: &mut TcpStream, status: u16, message: &str) -
     Ok(())
 }
 
-fn open_browser(url: &str) -> Result<()> {
+pub(crate) fn open_browser(url: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     let status = Command::new("open").arg(url).status();
     #[cfg(target_os = "windows")]
@@ -265,6 +280,7 @@ fn open_browser(url: &str) -> Result<()> {
 }
 
 pub async fn whoami(client: &DashboardClient, config_path: &Path) -> Result<()> {
+    let _guard = crate::config::lock_profile(config_path).await?;
     let mut config = Config::load(config_path)?;
     let identity = client
         .whoami(&config.auth.access_token)
@@ -449,7 +465,12 @@ pub async fn analytics_calling_logs(
 }
 
 pub async fn refresh(client: &DashboardClient, config_path: &Path) -> Result<()> {
+    let guard = crate::config::lock_profile(config_path).await?;
     let mut config = Config::load(config_path)?;
+    if config.auth.oauth.is_some() {
+        drop(guard);
+        return crate::oauth::refresh(client, config_path, config).await;
+    }
     let token = client
         .refresh(&config.auth.refresh_token)
         .await?
@@ -466,7 +487,12 @@ pub async fn refresh(client: &DashboardClient, config_path: &Path) -> Result<()>
 }
 
 pub async fn logout(client: &DashboardClient, config_path: &Path) -> Result<()> {
+    let guard = crate::config::lock_profile(config_path).await?;
     let config = Config::load(config_path)?;
+    if config.auth.oauth.is_some() {
+        drop(guard);
+        return crate::oauth::logout(client, config_path, config).await;
+    }
     let _ = client
         .revoke(&config.auth.access_token, &config.auth.record_id)
         .await

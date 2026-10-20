@@ -28,6 +28,15 @@ The npm packages are public, but npm provenance attestations are unavailable bec
 
 Keep all versions equal in `Cargo.toml`, the root `package.json`, and every package under `npm/`.
 
+### 0.3.0 standard OAuth
+
+Version `0.3.0` adds opt-in `login --oauth` with PKCE S256 and trusted issuer/resource discovery. Release notes must state that:
+
+- Existing `ycloud login` and saved legacy profiles continue to use the compatible Web authorization, refresh and revoke interfaces.
+- Production standard OAuth uses `--dashboard-url https://www.ycloud.com`, `--oauth-issuer https://open-platform.ycloud.com`, and `--oauth-resource https://www.ycloud.com/api/cli`.
+- Standard OAuth does not fall back to the legacy protocol when authorization fails.
+- Saved issuer, client, resource and business-origin bindings, serialized refresh, revoke, and the browser result page are included.
+
 ### 0.2.0 analytics cutover
 
 Version `0.2.0` replaces the previous analytics overview interface. Release notes must call out that:
@@ -44,8 +53,8 @@ cargo fmt -- --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 npm run test:npm
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 The workflow builds native binaries on GitHub-hosted macOS, Linux, and Windows runners, creates a private-repository GitHub Release for maintainers, publishes the npm packages, and updates the public Homebrew tap from the native npm tarballs. Windows ARM64 and x64 are distributed both as release ZIPs and through the npm launcher.
