@@ -30,7 +30,10 @@ Manual copy-paste authorization code input is still available with `ycloud login
 The development build supports the unified OAuth server without changing existing profiles:
 
 ```bash
-ycloud --dashboard-url https://www-test-indigo.ycloud.com --config /tmp/ycloud-oauth-test.toml login --oauth --profile basic
+ycloud --dashboard-url https://www-test-indigo.ycloud.com \
+  --config /tmp/ycloud-oauth-test.toml login --oauth --profile basic \
+  --oauth-issuer https://open-platform-test-indigo.ycloud.com \
+  --oauth-resource https://www-test-indigo.ycloud.com/api/cli
 ycloud --config /tmp/ycloud-oauth-test.toml whoami
 ycloud --config /tmp/ycloud-oauth-test.toml refresh
 ycloud --config /tmp/ycloud-oauth-test.toml logout
