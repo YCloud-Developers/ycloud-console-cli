@@ -25,18 +25,18 @@
 
 Manual copy-paste authorization code input is still available with `ycloud login --manual` for terminals that cannot receive a localhost browser callback.
 
-## Standard OAuth trial
+## Standard OAuth
 
-The development build supports the unified OAuth server without changing existing profiles:
+Version 0.3.0 supports the unified OAuth server through `login --oauth` without changing existing profiles:
 
 ```bash
-ycloud --dashboard-url https://www-test-indigo.ycloud.com \
-  --config /tmp/ycloud-oauth-test.toml login --oauth --profile basic \
-  --oauth-issuer https://open-platform-test-indigo.ycloud.com \
-  --oauth-resource https://www-test-indigo.ycloud.com/api/cli
-ycloud --config /tmp/ycloud-oauth-test.toml whoami
-ycloud --config /tmp/ycloud-oauth-test.toml refresh
-ycloud --config /tmp/ycloud-oauth-test.toml logout
+ycloud --dashboard-url https://www.ycloud.com \
+  --config /tmp/ycloud-oauth.toml login --oauth --profile basic \
+  --oauth-issuer https://open-platform.ycloud.com \
+  --oauth-resource https://www.ycloud.com/api/cli
+ycloud --config /tmp/ycloud-oauth.toml whoami
+ycloud --config /tmp/ycloud-oauth.toml refresh
+ycloud --config /tmp/ycloud-oauth.toml logout
 ```
 
 `--oauth` discovers the authorization server and `/api/cli` resource metadata, uses the
@@ -52,9 +52,9 @@ the originating terminal. The callback page does not infer a desktop application
 an arbitrary URI. Close the browser tab manually after checking the terminal. The CLI must
 remain running while authorization is in progress; its callback wait expires after 300 seconds.
 
-The test ingress must forward `/.well-known/oauth-authorization-server` and
+The OAuth service ingress must forward `/.well-known/oauth-authorization-server` and
 `/.well-known/oauth-protected-resource/api/cli`, plus `/api/oauth/v1/`, to `ycloud-open-platform:8080`. MCP resource discovery is
-independent and is not required for this CLI trial. HTTPS is required except for
+independent and is not required for CLI authorization. HTTPS is required except for
 127.0.0.1 mock servers with the explicit `YCLOUD_OAUTH_TEST_LOOPBACK=1` switch. Default login remains the legacy protocol until the standard
 server is available in every supported environment; standard failures never fall back.
 
@@ -70,7 +70,7 @@ Saved standard sessions bind issuer, client and resource. Business commands reje
 foreign `--dashboard-url`, and refresh/logout select the saved protocol. Refresh atomically
 replaces the token pair and rejects scope expansion; code exchange and rotation are not
 retried. Before rotation, the CLI atomically marks its result as unconfirmed; an interruption requires a new login instead of reusing the old refresh token. Logout removes local credentials even if the server cannot confirm revocation, reports that distinction, and directs the user to YCloud authorization management. Existing legacy profiles continue
-to use their old refresh/revoke endpoints. No npm/Homebrew release is part of this trial.
+to use their old refresh/revoke endpoints. Version 0.3.0 is distributed through the existing npm and Homebrew channels.
 
 ## Installation
 
