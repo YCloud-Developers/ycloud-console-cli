@@ -6,8 +6,6 @@
   --muted: #56616d;
   --subtle: #f8fafc;
   --border: #e2e8f0;
-  --action: #191c1f;
-  --action-text: #ffffff;
   --status-bg: #eaf8f1;
   --status-text: #13734b;
 }
@@ -18,11 +16,7 @@ main { width: 100%; max-width: 30rem; padding: 2.5rem 2rem; text-align: center; 
 .status-icon { width: 3.5rem; height: 3.5rem; margin: 0 auto 1.5rem; display: grid; place-items: center; border-radius: 50%; background: var(--status-bg); color: var(--status-text); font-size: 1.75rem; font-weight: 600; }
 h1 { margin: 0 0 1rem; font-size: clamp(1.5rem, 6vw, 1.875rem); line-height: 1.3; font-weight: 650; }
 p { margin: 0; color: var(--muted); font-size: 0.9375rem; line-height: 1.7; overflow-wrap: anywhere; }
-button { display: block; width: 100%; min-height: 2.75rem; margin-top: 1.5rem; padding: 0.75rem 1rem; border: 0; border-radius: 0.625rem; background: var(--action); color: var(--action-text); font: inherit; font-weight: 600; cursor: pointer; }
-button[hidden] { display: none; }
-button:hover { opacity: 0.88; }
-button:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
-.hint { margin-top: 1rem; font-size: 0.8125rem; }
+.hint { margin-top: 1.5rem; font-size: 0.8125rem; }
 footer { margin-top: 1.5rem; color: var(--muted); font-size: 0.8125rem; }
 body[data-state="denied"], body[data-state="rejected"] { --status-bg: #fff3e5; --status-text: #8c4a08; }
 @media (max-width: 360px) {
@@ -34,7 +28,7 @@ body[data-state="denied"], body[data-state="rejected"] { --status-bg: #fff3e5; -
   .hint { margin-top: 0.75rem; line-height: 1.5; }
 }
 @media (prefers-color-scheme: dark) {
-  :root { color: #f4f5f6; background: #0a0a0a; --surface: #171717; --muted: #b5bcc5; --subtle: #242424; --border: #363636; --action: #f4f5f6; --action-text: #191c1f; --status-bg: #16392a; --status-text: #8bd9b2; }
+  :root { color: #f4f5f6; background: #0a0a0a; --surface: #171717; --muted: #b5bcc5; --subtle: #242424; --border: #363636; --status-bg: #16392a; --status-text: #8bd9b2; }
   .logo { filter: invert(1); }
   body[data-state="denied"], body[data-state="rejected"] { --status-bg: #3b2b18; --status-text: #f4c38c; }
 }
