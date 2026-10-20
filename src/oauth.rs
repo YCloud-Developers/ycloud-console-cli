@@ -515,6 +515,7 @@ pub async fn login(dashboard: &DashboardClient, config_path: &Path, args: LoginA
         config.auth.tenant_id = Some(identity.tenant_id);
         config.auth.user_id = Some(identity.user_id);
     }
+    let _guard = crate::config::lock_profile(config_path).await?;
     config.save(config_path)?;
     println!(
         "OAuth login succeeded. Profile saved at {}.",
@@ -525,6 +526,16 @@ pub async fn login(dashboard: &DashboardClient, config_path: &Path, args: LoginA
 
 /// Upgrade only the original same-origin trial binding, using trusted discovery before credentials.
 pub async fn prepare_session(
+    config: &mut Config,
+    config_path: &Path,
+    business_base: &str,
+) -> Result<OAuthClient> {
+    let _guard = crate::config::lock_profile(config_path).await?;
+    *config = Config::load(config_path)?;
+    prepare_session_locked(config, config_path, business_base).await
+}
+
+async fn prepare_session_locked(
     config: &mut Config,
     config_path: &Path,
     business_base: &str,
@@ -563,9 +574,11 @@ pub async fn prepare_session(
 pub async fn refresh(
     dashboard: &DashboardClient,
     config_path: &Path,
-    mut config: Config,
+    _initial_config: Config,
 ) -> Result<()> {
-    let client = prepare_session(&mut config, config_path, &dashboard.base_url()).await?;
+    let _guard = crate::config::lock_profile(config_path).await?;
+    let mut config = Config::load(config_path)?;
+    let client = prepare_session_locked(&mut config, config_path, &dashboard.base_url()).await?;
     let session = config
         .auth
         .oauth
@@ -616,10 +629,13 @@ pub async fn refresh(
 pub async fn logout(
     dashboard: &DashboardClient,
     config_path: &Path,
-    mut config: Config,
+    _initial_config: Config,
 ) -> Result<()> {
+    let _guard = crate::config::lock_profile(config_path).await?;
+    let mut config = Config::load(config_path)?;
     let result = async {
-        let client = prepare_session(&mut config, config_path, &dashboard.base_url()).await?;
+        let client =
+            prepare_session_locked(&mut config, config_path, &dashboard.base_url()).await?;
         let endpoint = config
             .auth
             .oauth

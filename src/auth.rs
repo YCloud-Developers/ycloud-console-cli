@@ -120,6 +120,7 @@ pub async fn login(client: &DashboardClient, config_path: &Path, args: LoginArgs
         config.auth.user_id = Some(identity.user_id);
     }
 
+    let _guard = crate::config::lock_profile(config_path).await?;
     config.save(config_path)?;
     println!(
         "Login succeeded. Profile saved at {}.",
@@ -277,6 +278,7 @@ pub(crate) fn open_browser(url: &str) -> Result<()> {
 }
 
 pub async fn whoami(client: &DashboardClient, config_path: &Path) -> Result<()> {
+    let _guard = crate::config::lock_profile(config_path).await?;
     let mut config = Config::load(config_path)?;
     let identity = client
         .whoami(&config.auth.access_token)

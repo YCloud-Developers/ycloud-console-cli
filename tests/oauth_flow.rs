@@ -757,3 +757,59 @@ async fn cli_logout_cleans_an_old_trial_profile_when_discovery_is_unavailable() 
     assert!(!location.exists());
     assert!(String::from_utf8_lossy(&output.stderr).contains("remote revocation was not confirmed"));
 }
+
+#[tokio::test]
+async fn concurrent_refresh_processes_never_replay_the_same_rotation_token() {
+    use std::process::{Command, Stdio};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let location = dir.path().join("config.toml");
+    saved_profile(&server, &location);
+    let requests = Arc::new(AtomicUsize::new(0));
+    let rejected = Arc::new(AtomicUsize::new(0));
+    let observed = requests.clone();
+    let replayed = rejected.clone();
+    Mock::given(method("POST")).and(path("/api/oauth/v1/token"))
+        .respond_with(move |request: &wiremock::Request| {
+            let n = observed.fetch_add(1, Ordering::SeqCst);
+            let fields: std::collections::HashMap<_, _> = url::form_urlencoded::parse(&request.body).into_owned().collect();
+            let expected = if n == 0 { "old-refresh-fixture".to_string() } else { format!("refresh-{n}") };
+            if fields.get("refresh_token") != Some(&expected) {
+                replayed.fetch_add(1, Ordering::SeqCst);
+                return ResponseTemplate::new(400).set_body_json(json!({"error":"invalid_grant"}));
+            }
+            ResponseTemplate::new(200).set_delay(std::time::Duration::from_millis(250))
+                .set_body_json(json!({"access_token":format!("access-{}",n+1),"refresh_token":format!("refresh-{}",n+1),"token_type":"Bearer","expires_in":3600,"scope":"yc.identity.current.read"}))
+        }).expect(2).mount(&server).await;
+    let launch = || {
+        Command::new(env!("CARGO_BIN_EXE_ycloud"))
+            .args(["--config", location.to_str().unwrap(), "refresh"])
+            .env("YCLOUD_OAUTH_TEST_LOOPBACK", "1")
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
+    };
+    let a = launch();
+    let b = launch();
+    let (a, b) = tokio::join!(
+        tokio::task::spawn_blocking(move || a.wait_with_output().unwrap()),
+        tokio::task::spawn_blocking(move || b.wait_with_output().unwrap()),
+    );
+    for result in [a.unwrap(), b.unwrap()] {
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    assert_eq!(requests.load(Ordering::SeqCst), 2);
+    assert_eq!(rejected.load(Ordering::SeqCst), 0);
+    let saved = ycloud_console_cli::config::Config::load(&location).unwrap();
+    assert_eq!(saved.auth.refresh_token, "refresh-2");
+    assert!(!saved.auth.oauth.unwrap().refresh_uncertain);
+}

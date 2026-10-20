@@ -184,6 +184,25 @@ fn login_command(cli: &Cli, permissions: &[String]) -> String {
     format!("{command}{flags}")
 }
 
+pub fn oauth_login_command(
+    cli: &Cli,
+    config: &crate::config::Config,
+    permissions: &[String],
+) -> String {
+    let mut saved = cli.clone();
+    saved.dashboard_url = Some(config.dashboard.base_url.clone());
+    let mut command = login_command(&saved, permissions);
+    if let Some(session) = &config.auth.oauth {
+        command.push_str(" --oauth --oauth-issuer ");
+        command.push_str(&shell_arg(&session.issuer));
+        command.push_str(" --oauth-client-id ");
+        command.push_str(&shell_arg(&session.client_id));
+        command.push_str(" --oauth-resource ");
+        command.push_str(&shell_arg(&session.resource));
+    }
+    command
+}
+
 fn shell_arg(value: &str) -> String {
     if !value.is_empty()
         && value.bytes().all(|character| {
@@ -327,5 +346,65 @@ mod tests {
                 "yc.whatsapp.phone.read"
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod oauth_recovery_tests {
+    use super::*;
+    use crate::config::{AuthConfig, Config, DashboardConfig, OAuthSession};
+    use clap::Parser;
+    #[test]
+    fn recovery_uses_the_saved_environment_and_full_oauth_binding() {
+        let cli =
+            Cli::try_parse_from(["ycloud", "--config", "fixture.toml", "contacts", "metadata"])
+                .unwrap();
+        let config = Config {
+            dashboard: DashboardConfig {
+                base_url: "https://www-prepare.ycloud.com".into(),
+            },
+            auth: AuthConfig {
+                oauth: Some(OAuthSession {
+                    version: 2,
+                    business_base_url: Some("https://www-prepare.ycloud.com".into()),
+                    token_endpoint: None,
+                    revocation_endpoint: None,
+                    refresh_uncertain: false,
+                    issuer: "https://open-platform-prepare.ycloud.com".into(),
+                    client_id: "ycloud-console-cli".into(),
+                    resource: "https://www-prepare.ycloud.com/api/cli".into(),
+                    access_expires_at: 1,
+                }),
+                token_type: "Bearer".into(),
+                access_token: String::new(),
+                refresh_token: String::new(),
+                record_id: String::new(),
+                requested_permissions: vec![],
+                tenant_id: None,
+                user_id: None,
+            },
+        };
+        let command = oauth_login_command(&cli, &config, &["yc.contact.metadata.read".into()]);
+        let parsed = Cli::try_parse_from(command.split_whitespace()).unwrap();
+        assert_eq!(
+            parsed.dashboard_url.as_deref(),
+            Some(config.dashboard.base_url.as_str())
+        );
+        match parsed.command {
+            Command::Login(args) => {
+                assert!(args.oauth);
+                assert_eq!(
+                    args.oauth_issuer.as_deref(),
+                    Some("https://open-platform-prepare.ycloud.com")
+                );
+                assert_eq!(
+                    args.oauth_resource.as_deref(),
+                    Some("https://www-prepare.ycloud.com/api/cli")
+                );
+                assert_eq!(args.oauth_client_id.as_deref(), Some("ycloud-console-cli"));
+            }
+            _ => panic!("expected login command"),
+        }
+        assert_eq!(shell_arg("client'with space"), "'client'\\''with space'");
     }
 }

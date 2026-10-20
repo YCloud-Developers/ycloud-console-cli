@@ -45,7 +45,8 @@ pub async fn run() -> Result<()> {
             };
 
             if config.auth.oauth.is_some() {
-                plan.login_command.push_str(" --oauth");
+                plan.login_command =
+                    permissions::oauth_login_command(&cli, &config, &plan.requested_permissions);
             }
 
             eprintln!(
