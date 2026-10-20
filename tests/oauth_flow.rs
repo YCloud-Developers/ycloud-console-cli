@@ -432,28 +432,72 @@ async fn real_cli_callback_flow_checks_issuer_state_and_persists_standard_sessio
         ("state", query["state"].as_str()),
         ("iss", "https://attacker.example"),
     ]);
-    assert_eq!(
-        reqwest::get(callback.as_str())
-            .await
-            .unwrap()
-            .status()
-            .as_u16(),
-        400
-    );
+    let rejected = reqwest::get(callback.as_str()).await.unwrap();
+    assert_eq!(rejected.status().as_u16(), 400);
+    let rejected_page = rejected.text().await.unwrap();
+    assert!(rejected_page.contains("data-state=\"rejected\""));
+    assert!(rejected_page.contains("id=\"symbol\">!</span>"));
+    assert!(!rejected_page.contains("code-login-fixture"));
+    assert!(!rejected_page.contains("https://attacker.example"));
     callback.set_query(None);
     callback.query_pairs_mut().extend_pairs([
         ("code", "code-login-fixture"),
         ("state", query["state"].as_str()),
         ("iss", server.uri().as_str()),
     ]);
+    let accepted = reqwest::get(callback.as_str()).await.unwrap();
+    assert_eq!(accepted.status().as_u16(), 200);
     assert_eq!(
-        reqwest::get(callback.as_str())
-            .await
-            .unwrap()
-            .status()
-            .as_u16(),
-        200
+        accepted.headers()["content-type"],
+        "text/html; charset=utf-8"
     );
+    assert_eq!(accepted.headers()["cache-control"], "no-store");
+    assert_eq!(accepted.headers()["referrer-policy"], "no-referrer");
+    let policy = accepted.headers()["content-security-policy"]
+        .to_str()
+        .unwrap();
+    assert!(policy.contains("default-src 'none'"));
+    assert!(policy.contains("frame-ancestors 'none'"));
+    assert!(policy.contains("script-src 'sha256-"));
+    assert!(!policy.contains("unsafe-inline"));
+    let preview_headers = [
+        "content-security-policy",
+        "content-type",
+        "cache-control",
+        "referrer-policy",
+    ]
+    .map(|name| {
+        (
+            name.to_string(),
+            accepted.headers()[name].to_str().unwrap().to_string(),
+        )
+    })
+    .into_iter()
+    .collect::<std::collections::BTreeMap<_, _>>();
+    let expected_length: usize = accepted.headers()["content-length"]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let accepted_page = accepted.text().await.unwrap();
+    assert_eq!(accepted_page.len(), expected_length);
+    assert!(accepted_page.contains("data-state=\"received\""));
+    assert!(!accepted_page.contains("code-login-fixture"));
+    assert!(!accepted_page.contains(query["state"].as_str()));
+    assert!(!accepted_page.contains("opaque-login-fixture"));
+    // Optional native-response snapshots for browser checks; fixtures only, never
+    // export callback URLs, request parameters, cookies or credential profiles.
+    if let Some(directory) = std::env::var_os("YCLOUD_CALLBACK_PREVIEW_DIR") {
+        let directory = std::path::PathBuf::from(directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("accepted.html"), &accepted_page).unwrap();
+        std::fs::write(directory.join("rejected.html"), &rejected_page).unwrap();
+        std::fs::write(
+            directory.join("http-headers.json"),
+            serde_json::to_string(&preview_headers).unwrap(),
+        )
+        .unwrap();
+    }
     let status = tokio::task::spawn_blocking(move || {
         for _ in 0..100 {
             if let Some(s) = child.try_wait().unwrap() {

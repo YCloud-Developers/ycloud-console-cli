@@ -747,17 +747,12 @@ async fn wait_callback(listener: TcpListener, state: &str, issuer: &str) -> Resu
             }
             _ => Err(anyhow::anyhow!("invalid OAuth callback request")),
         };
-        let status = if matches!(&outcome, Ok(Some(_))) {
-            "200 OK"
-        } else {
-            "400 Bad Request"
+        let page_state = match &outcome {
+            Ok(Some(_)) => crate::oauth_callback::PageState::Received,
+            Ok(None) => crate::oauth_callback::PageState::Denied,
+            Err(_) => crate::oauth_callback::PageState::Rejected,
         };
-        let body = if matches!(&outcome, Ok(Some(_))) {
-            "YCloud authorization received. Return to the terminal to finish login."
-        } else {
-            "YCloud authorization callback rejected."
-        };
-        let response = format!("HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len());
+        let response = crate::oauth_callback::response(page_state);
         let _ = tokio::time::timeout(
             Duration::from_secs(2),
             stream.write_all(response.as_bytes()),

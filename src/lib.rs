@@ -6,6 +6,7 @@ pub mod config;
 pub mod export;
 pub mod http;
 pub mod oauth;
+mod oauth_callback;
 pub mod permissions;
 pub mod pkce;
 pub mod waba_assignment;

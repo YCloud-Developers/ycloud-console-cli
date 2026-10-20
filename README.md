@@ -42,6 +42,13 @@ issuer. The localhost callback is `http://127.0.0.1:<random-port>/oauth/callback
 `--no-browser` prints the URL while retaining the callback listener. Standard OAuth does
 not support manual code pasting or scripted `--code`/`--state`/`--code-verifier` overrides.
 
+The local callback displays a self-contained YCloud result page in English or Chinese,
+with light/dark appearance and a best-effort Close this page button. Browser authorization
+completion is separate from token exchange: wait for the CLI's login success message in
+the originating terminal. The callback page does not infer a desktop application or launch
+an arbitrary URI. If the browser prevents closing, close the tab manually. The CLI must
+remain running while authorization is in progress; its callback wait expires after 300 seconds.
+
 The test ingress must forward `/.well-known/oauth-authorization-server` and
 `/.well-known/oauth-protected-resource/api/cli`, plus `/api/oauth/v1/`, to `ycloud-open-platform:8080`. MCP resource discovery is
 independent and is not required for this CLI trial. HTTPS is required except for
