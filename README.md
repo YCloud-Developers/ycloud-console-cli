@@ -64,13 +64,13 @@ Both metadata documents are fetched from the explicit trusted issuer. With separ
 
 Saved version 2 standard sessions bind issuer, client, resource, business origin and discovered token/revoke endpoints. Endpoints must use the issuer origin; business requests must remain under `/api/cli/`. Redirects and environment proxies are disabled for standard OAuth and its business calls. Old trial sessions upgrade only after same-origin trusted discovery, retaining the original grant. Unsupported or inconsistent versions require a new login.
 
-Standard profile updates are serialized across local processes. A failed or unknown refresh still requires a new login instead of retrying the old refresh token. Permission-recovery commands preserve the saved Web origin, issuer, client and resource. Business clients bind their address and credential snapshot under the same profile lock. A replaced profile cannot send its credentials through an older client; retry the command after a profile change. Source builds require Rust 1.89 or later.
+The CLI does not create or open profile lock files. Read-only queries, including `whoami`, use an atomic profile snapshot without updating the profile. They work with a readable config in a read-only directory, including legacy and original same-origin OAuth trial profiles. Login, explicit `refresh`, logout and trial-profile upgrades still require write access; queries do not refresh tokens automatically. Profile saves remain atomic, but credential operations are not serialized across processes: concurrent refreshes can be rejected by server replay protection and revoke the grant, requiring a new login. Do not run concurrent credential updates against the same config. A failed or unknown refresh still requires a new login instead of retrying the old refresh token. Permission-recovery commands preserve the saved Web origin, issuer, client and resource. Business clients bind their address and credentials to the same snapshot. A replaced profile cannot send its credentials through an older client; retry the command after a profile change. Source builds require Rust 1.89 or later.
 
 Saved standard sessions bind issuer, client and resource. Business commands reject a
 foreign `--dashboard-url`, and refresh/logout select the saved protocol. Refresh atomically
 replaces the token pair and rejects scope expansion; code exchange and rotation are not
 retried. Before rotation, the CLI atomically marks its result as unconfirmed; an interruption requires a new login instead of reusing the old refresh token. Logout removes local credentials even if the server cannot confirm revocation, reports that distinction, and directs the user to YCloud authorization management. Existing legacy profiles continue
-to use their old refresh/revoke endpoints. Version 0.3.0 is distributed through the existing npm and Homebrew channels.
+to use their old refresh/revoke endpoints. The CLI is distributed through the existing npm and Homebrew channels.
 
 ## Installation
 

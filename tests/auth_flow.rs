@@ -74,6 +74,7 @@ async fn token_exchange_uses_backend_contract_and_saves_config_shape() {
     .unwrap();
 
     let config = Config::load(&config_path).unwrap();
+    assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 1);
     assert_eq!(config.dashboard.base_url, server.uri());
     assert_eq!(config.auth.access_token, "YCLI.access");
     assert_eq!(config.auth.refresh_token, "YCLI.refresh");

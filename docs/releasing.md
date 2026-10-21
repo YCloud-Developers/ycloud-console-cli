@@ -28,6 +28,16 @@ The npm packages are public, but npm provenance attestations are unavailable bec
 
 Keep all versions equal in `Cargo.toml`, the root `package.json`, and every package under `npm/`.
 
+### 0.3.1 local credential access
+
+Version `0.3.1` removes local profile file locking. Release notes must state that:
+
+- Queries with an existing usable token, including `whoami`, never write the profile or open a lock file. Legacy and standard profiles work in read-only config directories.
+- Login, explicit refresh, logout and trial-profile migration no longer create or open sidecar lock files; credential saves remain atomic.
+- Standard OAuth persists its unconfirmed-refresh marker before a one-time request and never automatically retries an unknown result. Writable config storage is still required for credential updates.
+- Credential operations are no longer serialized across processes. Concurrent refreshes against the same grant can trigger server replay protection and require login again; successful concurrent refresh is not guaranteed.
+- Default legacy login and opt-in standard OAuth endpoints remain unchanged. This release adds no server-side replay grace or idempotency window.
+
 ### 0.3.0 standard OAuth
 
 Version `0.3.0` adds opt-in `login --oauth` with PKCE S256 and trusted issuer/resource discovery. Release notes must state that:
@@ -53,8 +63,8 @@ cargo fmt -- --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 npm run test:npm
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.3.1
+git push origin v0.3.1
 ```
 
 The workflow builds native binaries on GitHub-hosted macOS, Linux, and Windows runners, creates a private-repository GitHub Release for maintainers, publishes the npm packages, and updates the public Homebrew tap from the native npm tarballs. Windows ARM64 and x64 are distributed both as release ZIPs and through the npm launcher.

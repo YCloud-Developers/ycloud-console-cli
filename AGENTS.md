@@ -17,6 +17,7 @@ This is the Console/Dashboard-oriented YCloud CLI. It is separate from the exist
 - Legacy access tokens use the backend `YCLI.` token prefix. Standard OAuth tokens are opaque and are never parsed as legacy tokens. Saved `auth.oauth` bindings select refresh/revoke; absent bindings mean legacy, without protocol fallback.
 - Standard sessions persist discovered token/revoke endpoints and the business origin. Validate bindings before HTTP, disable redirects/proxies, and never replay an unconfirmed refresh. Loopback HTTP requires `YCLOUD_OAUTH_TEST_LOOPBACK=1`.
 - Local config is stored under `~/.ycloud/config.toml`.
+- Do not create or open profile lock files. Read-only queries must not write config or migrate trial profiles. Credential writes keep atomic saves and the unknown-refresh marker, but do not promise cross-process serialization; server replay protection can reject concurrent refreshes and revoke the grant.
 - Do not log or print access tokens, refresh tokens, authorization codes, or Dashboard cookies.
 
 ## Coding Style
