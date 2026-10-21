@@ -436,12 +436,25 @@ fn requested_scopes(args: &LoginArgs, metadata: &OAuthMetadata) -> Result<Vec<St
     Ok(scopes.into_iter().collect())
 }
 
-pub async fn login(dashboard: &DashboardClient, config_path: &Path, args: LoginArgs) -> Result<()> {
-    if args.manual || args.code.is_some() || args.code_verifier.is_some() || args.state.is_some() {
-        bail!("Standard OAuth uses a validated localhost callback; manual/scripted code options are supported only by legacy login");
+fn login_issuer<'a>(args: &'a LoginArgs, business_base: &str) -> Result<&'a str> {
+    match args.oauth_issuer.as_deref() {
+        Some(issuer) => Ok(issuer),
+        None if business_base == crate::cli::DEFAULT_DASHBOARD_URL => {
+            Ok(crate::cli::DEFAULT_OAUTH_ISSUER)
+        }
+        None => bail!("Specify --oauth-issuer for a custom --dashboard-url; legacy login is not supported by this CLI"),
     }
+}
+
+pub(crate) fn require_oauth_session(config: &Config) -> Result<&OAuthSession> {
+    config.auth.oauth.as_ref().context(
+        "This profile uses legacy CLI authentication. Run `ycloud login` to authorize with standard OAuth; use --oauth-issuer with --dashboard-url for other environments. Existing legacy grants can be revoked in YCloud authorization management",
+    )
+}
+
+pub async fn login(dashboard: &DashboardClient, config_path: &Path, args: LoginArgs) -> Result<()> {
     let business_base = dashboard.base_url();
-    let issuer = args.oauth_issuer.as_deref().unwrap_or(&business_base);
+    let issuer = login_issuer(&args, &business_base)?;
     let resource = args
         .oauth_resource
         .clone()
@@ -558,11 +571,7 @@ async fn upgrade_trial_session(
 /// Validate a complete profile snapshot without locking, discovery or writes.
 /// Old trial bindings are upgraded only by the credential-writing paths.
 pub(crate) fn validate_session(config: &Config, business_base: &str) -> Result<OAuthClient> {
-    let session = config
-        .auth
-        .oauth
-        .as_ref()
-        .context("missing OAuth session binding")?;
+    let session = require_oauth_session(config)?;
     if business_base != config.dashboard.base_url {
         bail!("OAuth business address override changed; log in again");
     }
@@ -583,11 +592,7 @@ pub async fn refresh(
 ) -> Result<()> {
     let mut config = Config::load(config_path)?;
     let client = upgrade_trial_session(&mut config, config_path, &dashboard.base_url()).await?;
-    let session = config
-        .auth
-        .oauth
-        .as_ref()
-        .context("missing OAuth session binding")?;
+    let session = require_oauth_session(&config)?;
     if session.refresh_uncertain || config.auth.refresh_token.is_empty() {
         bail!("Previous OAuth refresh was not confirmed; log in again instead of reusing the refresh token");
     }
@@ -636,6 +641,7 @@ pub async fn logout(
     _initial_config: Config,
 ) -> Result<()> {
     let mut config = Config::load(config_path)?;
+    require_oauth_session(&config)?;
     let result = async {
         let client = upgrade_trial_session(&mut config, config_path, &dashboard.base_url()).await?;
         let endpoint = config
@@ -787,6 +793,24 @@ async fn wait_callback(listener: TcpListener, state: &str, issuer: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn default_login_uses_the_open_platform_issuer_and_custom_origins_require_a_choice() {
+        use clap::Parser;
+        for flags in [vec![], vec!["--oauth"]] {
+            let mut argv = vec!["ycloud", "login"];
+            argv.extend(flags);
+            let cli = crate::cli::Cli::try_parse_from(argv).unwrap();
+            let crate::cli::Command::Login(args) = cli.command else {
+                panic!("expected login");
+            };
+            assert_eq!(
+                login_issuer(&args, "https://www.ycloud.com").unwrap(),
+                "https://open-platform.ycloud.com"
+            );
+            assert!(login_issuer(&args, "https://www-prepare.ycloud.com").is_err());
+        }
+    }
+
     #[test]
     fn callback_requires_exact_state_issuer_and_unique_parameters() {
         let issuer = "https://www.ycloud.com";

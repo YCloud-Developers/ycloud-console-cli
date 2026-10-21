@@ -3,14 +3,13 @@ use chrono::{SecondsFormat, Utc};
 use rand::Rng;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, RETRY_AFTER};
 use reqwest::StatusCode;
-use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::time::Duration;
 use std::{fmt, path::Path};
 use tokio::io::AsyncWriteExt;
 use url::Url;
 
-use crate::pkce::PkcePair;
 use crate::waba_assignment::{AssignmentRule, PhoneAssignment, PhoneIdsSearchRequest, PhoneNumber};
 
 #[derive(Debug, Clone)]
@@ -27,7 +26,6 @@ pub struct DashboardClient {
 #[derive(Clone)]
 struct ProfileBinding {
     access: [u8; 32],
-    refresh: [u8; 32],
 }
 
 impl fmt::Debug for ProfileBinding {
@@ -131,10 +129,9 @@ impl DashboardClient {
         client
     }
 
-    pub(crate) fn bind_profile(mut self, access: &str, refresh: &str) -> Self {
+    pub(crate) fn bind_profile(mut self, access: &str) -> Self {
         self.profile_binding = Some(ProfileBinding {
             access: Sha256::digest(access.as_bytes()).into(),
-            refresh: Sha256::digest(refresh.as_bytes()).into(),
         });
         self
     }
@@ -161,75 +158,6 @@ impl DashboardClient {
 
     pub fn base_url(&self) -> String {
         self.base_url.as_str().trim_end_matches('/').to_string()
-    }
-
-    pub fn authorize_url(
-        &self,
-        profile: &str,
-        permissions: &[String],
-        state: &str,
-        pkce: &PkcePair,
-        redirect_uri: Option<&str>,
-    ) -> Result<Url> {
-        let mut url = self.join("/api/cli/auth/authorize")?;
-        let mut query = url.query_pairs_mut();
-        query
-            .append_pair("responseType", "code")
-            .append_pair("profile", profile)
-            .append_pair("state", state)
-            .append_pair("codeChallenge", &pkce.code_challenge)
-            .append_pair("codeChallengeMethod", "S256");
-        if !permissions.is_empty() {
-            query.append_pair("permissions", &permissions.join(","));
-        }
-        if let Some(redirect_uri) = redirect_uri {
-            query.append_pair("redirectUri", redirect_uri);
-        }
-        drop(query);
-        Ok(url)
-    }
-
-    pub async fn exchange_token(
-        &self,
-        code: &str,
-        code_verifier: &str,
-    ) -> Result<ApiEnvelope<TokenData>> {
-        self.post_json(
-            "/api/cli/auth/token",
-            None,
-            &TokenExchangeRequest {
-                grant_type: "authorization_code",
-                code,
-                code_verifier,
-            },
-        )
-        .await
-    }
-
-    pub async fn refresh(&self, refresh_token: &str) -> Result<ApiEnvelope<TokenData>> {
-        if let Some(binding) = &self.profile_binding {
-            if binding.refresh != <[u8; 32]>::from(Sha256::digest(refresh_token.as_bytes())) {
-                anyhow::bail!("Saved profile changed; retry the command with the current profile");
-            }
-        }
-        self.post_json(
-            "/api/cli/auth/refresh",
-            None,
-            &RefreshRequest {
-                grant_type: "refresh_token",
-                refresh_token,
-            },
-        )
-        .await
-    }
-
-    pub async fn revoke(&self, access_token: &str, record_id: &str) -> Result<ApiEnvelope<bool>> {
-        self.post_json(
-            "/api/cli/auth/revoke",
-            Some(access_token),
-            &RevokeRequest { record_id },
-        )
-        .await
     }
 
     pub async fn whoami(&self, access_token: &str) -> Result<ApiEnvelope<WhoamiData>> {
@@ -637,28 +565,6 @@ impl DashboardClient {
                     }
                 }
             }
-        };
-        tokio::time::timeout(self.timeout, request)
-            .await
-            .map_err(|_| anyhow::anyhow!("dashboard API request timed out"))?
-    }
-
-    async fn post_json<T: DeserializeOwned, B: Serialize + ?Sized>(
-        &self,
-        path: &str,
-        token: Option<&str>,
-        body: &B,
-    ) -> Result<ApiEnvelope<T>> {
-        let request = async {
-            let response = self
-                .http
-                .post(self.join(path)?)
-                .headers(self.attempt_headers(token)?)
-                .json(body)
-                .send()
-                .await
-                .map_err(map_request_error)?;
-            parse_response(response).await
         };
         tokio::time::timeout(self.timeout, request)
             .await
@@ -1122,34 +1028,6 @@ impl<T> ApiEnvelope<T> {
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
-pub struct TokenData {
-    #[serde(rename = "tokenType")]
-    pub token_type: String,
-    #[serde(rename = "accessToken")]
-    pub access_token: String,
-    #[serde(rename = "refreshToken")]
-    pub refresh_token: String,
-    #[serde(rename = "recordId", deserialize_with = "deserialize_string_or_number")]
-    pub record_id: String,
-    #[serde(rename = "requestedPermissions")]
-    pub requested_permissions: Vec<String>,
-    #[serde(rename = "permissionModelVersion")]
-    pub permission_model_version: u32,
-}
-
-fn deserialize_string_or_number<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = serde_json::Value::deserialize(deserializer)?;
-    match value {
-        serde_json::Value::String(value) => Ok(value),
-        serde_json::Value::Number(value) => Ok(value.to_string()),
-        _ => Err(serde::de::Error::custom("expected string or number")),
-    }
-}
-
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 pub struct WhoamiData {
     #[serde(rename = "userId")]
     pub user_id: String,
@@ -1165,29 +1043,6 @@ pub struct WhoamiData {
 pub struct TenantsData {
     #[serde(default)]
     pub tenants: Vec<serde_json::Value>,
-}
-
-#[derive(Debug, Serialize)]
-struct TokenExchangeRequest<'a> {
-    #[serde(rename = "grantType")]
-    grant_type: &'a str,
-    code: &'a str,
-    #[serde(rename = "codeVerifier")]
-    code_verifier: &'a str,
-}
-
-#[derive(Debug, Serialize)]
-struct RefreshRequest<'a> {
-    #[serde(rename = "grantType")]
-    grant_type: &'a str,
-    #[serde(rename = "refreshToken")]
-    refresh_token: &'a str,
-}
-
-#[derive(Debug, Serialize)]
-struct RevokeRequest<'a> {
-    #[serde(rename = "recordId")]
-    record_id: &'a str,
 }
 
 #[derive(Debug, Serialize)]
@@ -1400,94 +1255,6 @@ pub struct AnalyticsCallingLogsRequest<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pkce::challenge_for_verifier;
-
-    #[test]
-    fn authorize_url_matches_backend_contract() {
-        let client = DashboardClient::new("http://127.0.0.1:8036".to_string()).unwrap();
-        let pkce = challenge_for_verifier("verifier");
-        let url = client
-            .authorize_url(
-                "analytics-read",
-                &["yc.integration.status.read".to_string()],
-                "state-1",
-                &pkce,
-                None,
-            )
-            .unwrap();
-        let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
-
-        assert_eq!(url.path(), "/api/cli/auth/authorize");
-        assert_eq!(query.get("responseType"), Some(&"code".to_string()));
-        assert_eq!(query.get("profile"), Some(&"analytics-read".to_string()));
-        assert_eq!(
-            query.get("permissions"),
-            Some(&"yc.integration.status.read".to_string())
-        );
-        assert_eq!(query.get("scope"), None);
-        assert_eq!(query.get("state"), Some(&"state-1".to_string()));
-        assert_eq!(query.get("codeChallengeMethod"), Some(&"S256".to_string()));
-        assert_eq!(query.get("codeChallenge"), Some(&pkce.code_challenge));
-        assert_eq!(query.get("redirectUri"), None);
-    }
-
-    #[test]
-    fn authorize_url_includes_redirect_uri_when_present() {
-        let client = DashboardClient::new("https://dashboard.example".to_string()).unwrap();
-        let pkce = challenge_for_verifier("verifier");
-
-        let url = client
-            .authorize_url(
-                "basic",
-                &[],
-                "state-1",
-                &pkce,
-                Some("http://127.0.0.1:39123/callback"),
-            )
-            .unwrap();
-        let query: std::collections::HashMap<_, _> = url
-            .query_pairs()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-
-        assert_eq!(
-            query.get("redirectUri"),
-            Some(&"http://127.0.0.1:39123/callback".to_string())
-        );
-    }
-
-    #[test]
-    fn token_data_accepts_numeric_record_id() {
-        let token: TokenData = serde_json::from_value(serde_json::json!({
-            "tokenType": "Bearer",
-            "accessToken": "YCLI.access",
-            "refreshToken": "YCLI.refresh",
-            "recordId": 1272676752573050880u64,
-            "requestedPermissions": ["yc.identity.current.read"],
-            "permissionModelVersion": 1
-        }))
-        .unwrap();
-
-        assert_eq!(token.record_id, "1272676752573050880");
-    }
-
-    #[test]
-    fn token_data_requires_permission_snapshot_and_model_version() {
-        for missing_field in ["requestedPermissions", "permissionModelVersion"] {
-            let mut value = serde_json::json!({
-                "tokenType": "Bearer",
-                "accessToken": "YCLI.access",
-                "refreshToken": "YCLI.refresh",
-                "recordId": "record-1",
-                "requestedPermissions": ["yc.identity.current.read"],
-                "permissionModelVersion": 1
-            });
-            value.as_object_mut().unwrap().remove(missing_field);
-
-            assert!(serde_json::from_value::<TokenData>(value).is_err());
-        }
-    }
-
     #[test]
     fn api_envelope_accepts_click_msg_field() {
         let envelope: ApiEnvelope<serde_json::Value> = serde_json::from_value(serde_json::json!({

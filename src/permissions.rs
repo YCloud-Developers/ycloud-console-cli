@@ -193,7 +193,7 @@ pub fn oauth_login_command(
     saved.dashboard_url = Some(config.dashboard.base_url.clone());
     let mut command = login_command(&saved, permissions);
     if let Some(session) = &config.auth.oauth {
-        command.push_str(" --oauth --oauth-issuer ");
+        command.push_str(" --oauth-issuer ");
         command.push_str(&shell_arg(&session.issuer));
         command.push_str(" --oauth-client-id ");
         command.push_str(&shell_arg(&session.client_id));
@@ -392,7 +392,7 @@ mod oauth_recovery_tests {
         );
         match parsed.command {
             Command::Login(args) => {
-                assert!(args.oauth);
+                assert!(!args.oauth);
                 assert_eq!(
                     args.oauth_issuer.as_deref(),
                     Some("https://open-platform-prepare.ycloud.com")

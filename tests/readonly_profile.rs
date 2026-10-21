@@ -136,7 +136,7 @@ async fn assert_queries_leave_profile_unchanged(server: &MockServer, location: &
 
 #[tokio::test]
 async fn queries_work_when_the_lock_path_cannot_be_opened() {
-    for version in [None, Some(1), Some(2)] {
+    for version in [Some(1), Some(2)] {
         let server = MockServer::start().await;
         mock_queries(&server).await;
         let dir = tempfile::tempdir().unwrap();
@@ -172,7 +172,7 @@ impl Drop for ReadOnlyDirectory {
 #[cfg(unix)]
 #[tokio::test]
 async fn queries_work_with_a_read_only_profile_and_directory_without_creating_a_lock() {
-    for version in [None, Some(1), Some(2)] {
+    for version in [Some(1), Some(2)] {
         let server = MockServer::start().await;
         mock_queries(&server).await;
         let dir = tempfile::tempdir().unwrap();
@@ -207,12 +207,8 @@ async fn queries_do_not_overwrite_an_unconfirmed_refresh_marker() {
 
 #[tokio::test]
 async fn refresh_does_not_create_locks_and_ignores_obsolete_lock_paths() {
-    for (version, obsolete_lock) in [
-        (None, false),
-        (None, true),
-        (Some(2), false),
-        (Some(2), true),
-    ] {
+    for obsolete_lock in [false, true] {
+        let version = Some(2);
         let server = MockServer::start().await;
         let dir = tempfile::tempdir().unwrap();
         let location = dir.path().join("config.toml");
@@ -220,24 +216,11 @@ async fn refresh_does_not_create_locks_and_ignores_obsolete_lock_paths() {
         if obsolete_lock {
             std::fs::create_dir(dir.path().join(".config.toml.lock")).unwrap();
         }
-        let (endpoint, response) = if version.is_some() {
-            (
-                "/api/oauth/v1/token",
-                json!({
-                    "access_token":"new-access-fixture", "refresh_token":"new-refresh-fixture",
-                    "token_type":"Bearer", "expires_in":3600, "scope":"yc.identity.current.read"
-                }),
-            )
-        } else {
-            (
-                "/api/cli/auth/refresh",
-                json!({"code":0,"data":{
-                    "accessToken":"YCLI.new-access", "refreshToken":"YCLI.new-refresh",
-                    "tokenType":"Bearer", "recordId":"fixture-record",
-                    "requestedPermissions":["yc.identity.current.read"],"permissionModelVersion":1
-                }}),
-            )
-        };
+        let endpoint = "/api/oauth/v1/token";
+        let response = json!({
+            "access_token":"new-access-fixture", "refresh_token":"new-refresh-fixture",
+            "token_type":"Bearer", "expires_in":3600, "scope":"yc.identity.current.read"
+        });
         Mock::given(method("POST"))
             .and(path(endpoint))
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
@@ -296,4 +279,33 @@ async fn sandbox_denies_standard_refresh_before_http_even_without_file_locking()
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].url.path(), "/api/cli/v1/whoami");
+}
+
+#[tokio::test]
+async fn legacy_profiles_require_new_login_without_http_or_profile_changes() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let location = dir.path().join("config.toml");
+    save_profile(&server, &location, None);
+    let before = std::fs::read(&location).unwrap();
+    let modified = std::fs::metadata(&location).unwrap().modified().unwrap();
+    for args in [
+        vec!["whoami"],
+        vec!["contacts", "list"],
+        vec!["refresh"],
+        vec!["logout"],
+    ] {
+        let output = run_cli(&location, &args).await;
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains("legacy CLI authentication"), "{error}");
+        assert!(error.contains("ycloud login"), "{error}");
+        assert_eq!(std::fs::read(&location).unwrap(), before);
+        assert_eq!(
+            std::fs::metadata(&location).unwrap().modified().unwrap(),
+            modified
+        );
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
 }

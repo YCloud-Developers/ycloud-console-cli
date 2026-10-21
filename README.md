@@ -4,7 +4,7 @@
 
 ## Scope
 
-- `ycloud login` uses Dashboard browser grant + PKCE, receives the code through a localhost callback by default, and stores `YCLI.` tokens.
+- `ycloud login` always uses standard OAuth discovery and PKCE S256, opens the browser consent flow, and receives the code through a validated localhost callback.
 - `ycloud whoami` reads the current Console CLI identity.
 - `ycloud tenants list` lists tenants available to the current Console CLI token.
 - `ycloud integrations status` and `ycloud contacts metadata` use the stable `/api/cli/v1/**` contract.
@@ -19,31 +19,39 @@
 - `ycloud analytics overview`, `trend`, and `templates` use the stable WhatsApp analytics contract. The CLI sends RFC 3339 time values and an IANA timezone such as `Asia/Shanghai`.
 - Business commands use only the stable `/api/cli/v1/**` contract and never fall back to `/api/cli/read/**`. The legacy adapters remain server-side for CLI v0.1.3 compatibility.
 - Every HTTP attempt sends a new `X-Request-Id`; attempts from one command share a non-secret invocation ID and mode.
-- `ycloud contacts list`, `ycloud analytics logs`, and `ycloud analytics calling-logs` use stable web-owned v1 contracts. `YCLI.` tokens do not call ordinary Dashboard paths.
+- `ycloud contacts list`, `ycloud analytics logs`, and `ycloud analytics calling-logs` use stable web-owned v1 contracts. CLI tokens do not call ordinary Dashboard paths.
 - `ycloud refresh` rotates the refresh token.
 - `ycloud logout` revokes the current token and removes the local profile.
 
-Manual copy-paste authorization code input is still available with `ycloud login --manual` for terminals that cannot receive a localhost browser callback.
+Use `ycloud login --no-browser` to open the printed authorization URL yourself while keeping the localhost callback listener running. Legacy manual-code flags are no longer accepted.
 
 ## Standard OAuth
 
-Version 0.3.0 supports the unified OAuth server through `login --oauth` without changing existing profiles:
+`ycloud login` uses the unified OAuth server by default:
 
 ```bash
-ycloud --dashboard-url https://www.ycloud.com \
-  --config /tmp/ycloud-oauth.toml login --oauth --profile basic \
-  --oauth-issuer https://open-platform.ycloud.com \
-  --oauth-resource https://www.ycloud.com/api/cli
-ycloud --config /tmp/ycloud-oauth.toml whoami
-ycloud --config /tmp/ycloud-oauth.toml refresh
-ycloud --config /tmp/ycloud-oauth.toml logout
+ycloud login
+ycloud whoami
+ycloud refresh
+ycloud logout
 ```
 
-`--oauth` discovers the authorization server and `/api/cli` resource metadata, uses the
+Production defaults to issuer `https://open-platform.ycloud.com`, business origin
+`https://www.ycloud.com`, and resource `https://www.ycloud.com/api/cli`. For other environments,
+set both `--dashboard-url` and `--oauth-issuer`; the resource defaults to the business origin
+plus `/api/cli`. For example:
+
+```bash
+ycloud --dashboard-url https://www-prepare.ycloud.com \
+  --config /tmp/ycloud-prepare.toml login --profile basic \
+  --oauth-issuer https://open-platform-prepare.ycloud.com
+```
+
+Login discovers the authorization server and `/api/cli` resource metadata, uses the
 pre-registered public client `ycloud-console-cli`, and validates PKCE, state and callback
 issuer. The localhost callback is `http://127.0.0.1:<random-port>/oauth/callback`.
-`--no-browser` prints the URL while retaining the callback listener. Standard OAuth does
-not support manual code pasting or scripted `--code`/`--state`/`--code-verifier` overrides.
+`--oauth` remains an accepted, hidden no-op for existing scripts. There is no legacy login
+mode or protocol fallback. `--manual`, `--code`, `--state` and `--code-verifier` are rejected.
 
 The local callback displays a self-contained YCloud result page in English or Chinese,
 with light/dark appearance and an explicit manual-close hint. Browser authorization
@@ -55,8 +63,7 @@ remain running while authorization is in progress; its callback wait expires aft
 The OAuth service ingress must forward `/.well-known/oauth-authorization-server` and
 `/.well-known/oauth-protected-resource/api/cli`, plus `/api/oauth/v1/`, to `ycloud-open-platform:8080`. MCP resource discovery is
 independent and is not required for CLI authorization. HTTPS is required except for
-127.0.0.1 mock servers with the explicit `YCLOUD_OAUTH_TEST_LOOPBACK=1` switch. Default login remains the legacy protocol until the standard
-server is available in every supported environment; standard failures never fall back.
+127.0.0.1 mock servers with the explicit `YCLOUD_OAUTH_TEST_LOOPBACK=1` switch. Discovery or authorization failure never falls back to legacy authentication.
 
 OAuth options `--oauth-issuer`, `--oauth-client-id`, and `--oauth-resource` separate the trusted authorization server from the business origin supplied with `--dashboard-url`. Defaults retain the current same-origin CLI resource.
 
@@ -64,13 +71,12 @@ Both metadata documents are fetched from the explicit trusted issuer. With separ
 
 Saved version 2 standard sessions bind issuer, client, resource, business origin and discovered token/revoke endpoints. Endpoints must use the issuer origin; business requests must remain under `/api/cli/`. Redirects and environment proxies are disabled for standard OAuth and its business calls. Old trial sessions upgrade only after same-origin trusted discovery, retaining the original grant. Unsupported or inconsistent versions require a new login.
 
-The CLI does not create or open profile lock files. Read-only queries, including `whoami`, use an atomic profile snapshot without updating the profile. They work with a readable config in a read-only directory, including legacy and original same-origin OAuth trial profiles. Login, explicit `refresh`, logout and trial-profile upgrades still require write access; queries do not refresh tokens automatically. Profile saves remain atomic, but credential operations are not serialized across processes: concurrent refreshes can be rejected by server replay protection and revoke the grant, requiring a new login. Do not run concurrent credential updates against the same config. A failed or unknown refresh still requires a new login instead of retrying the old refresh token. Permission-recovery commands preserve the saved Web origin, issuer, client and resource. Business clients bind their address and credentials to the same snapshot. A replaced profile cannot send its credentials through an older client; retry the command after a profile change. Source builds require Rust 1.89 or later.
+The CLI does not create or open profile lock files. Read-only queries, including `whoami`, use an atomic profile snapshot without updating the profile. They work with a readable config in a read-only directory, including original same-origin standard OAuth trial profiles. Login, explicit `refresh`, logout and trial-profile upgrades still require write access; queries do not refresh tokens automatically. Profile saves remain atomic, but credential operations are not serialized across processes: concurrent refreshes can be rejected by server replay protection and revoke the grant, requiring a new login. Do not run concurrent credential updates against the same config. A failed or unknown refresh still requires a new login instead of retrying the old refresh token. Permission-recovery commands preserve the saved Web origin, issuer, client and resource. Business clients bind their address and credentials to the same snapshot. A replaced profile cannot send its credentials through an older client; retry the command after a profile change. Source builds require Rust 1.89 or later.
 
 Saved standard sessions bind issuer, client and resource. Business commands reject a
-foreign `--dashboard-url`, and refresh/logout select the saved protocol. Refresh atomically
+foreign `--dashboard-url`, and refresh/logout use the saved standard endpoints. Refresh atomically
 replaces the token pair and rejects scope expansion; code exchange and rotation are not
-retried. Before rotation, the CLI atomically marks its result as unconfirmed; an interruption requires a new login instead of reusing the old refresh token. Logout removes local credentials even if the server cannot confirm revocation, reports that distinction, and directs the user to YCloud authorization management. Existing legacy profiles continue
-to use their old refresh/revoke endpoints. The CLI is distributed through the existing npm and Homebrew channels.
+retried. Before rotation, the CLI atomically marks its result as unconfirmed; an interruption requires a new login instead of reusing the old refresh token. Logout removes local credentials even if the server cannot confirm revocation, reports that distinction, and directs the user to YCloud authorization management. Profiles created with legacy authentication require `ycloud login` again before queries, refresh or logout; their tokens are not converted or sent to either protocol. A successful new login replaces the local profile. Existing legacy grants can be revoked in YCloud authorization management. Server-side legacy endpoints remain available for previously released CLI versions. The CLI is distributed through the existing npm and Homebrew channels.
 
 ## Installation
 
@@ -97,23 +103,20 @@ npm install --global @ycloud-ai/console-cli
 ycloud --version
 ```
 
-## Local Test Against Dashboard
+## Local OAuth Test
 
-Run the required Dashboard services locally, then pass the local URL explicitly:
-
-```bash
-cargo run -- login --dashboard-url http://127.0.0.1:8036 --profile readonly
-```
-
-The CLI opens a browser and waits for Dashboard to redirect back to `http://127.0.0.1:<port>/callback`.
-
-If automatic browser login is not available, use the manual fallback:
+Run a mock or local OAuth service with matching resource metadata, and explicitly enable
+loopback HTTP for testing:
 
 ```bash
-cargo run -- login --dashboard-url http://127.0.0.1:8036 --profile readonly --manual
+YCLOUD_OAUTH_TEST_LOOPBACK=1 cargo run -- login \
+  --dashboard-url http://127.0.0.1:8036 --oauth-issuer http://127.0.0.1:8036 \
+  --profile readonly --no-browser
 ```
 
-In manual mode, open the printed URL in a browser that is already logged in to Dashboard, copy the returned `data.code`, then paste it into the CLI prompt.
+Open the printed URL in a browser. Keep the CLI running while the browser redirects to
+`http://127.0.0.1:<random-port>/oauth/callback`; the callback must include the exact state
+and issuer. Public deployments require HTTPS.
 
 ## Commands
 

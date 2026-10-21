@@ -265,7 +265,8 @@ fn client_for_logout(
         .dashboard_url
         .as_deref()
         .unwrap_or(&config.dashboard.base_url);
-    if let Some(session) = &config.auth.oauth {
+    {
+        let session = oauth::require_oauth_session(&config)?;
         if base != config.dashboard.base_url {
             anyhow::bail!("OAuth business address override changed; log in again");
         }
@@ -322,20 +323,16 @@ async fn saved_profile_client(
     // read-only snapshot; a later credential change is rejected before HTTP.
     let config = Config::load(config_path)?;
     let url = override_url.unwrap_or_else(|| config.dashboard.base_url.clone());
-    if config.auth.oauth.is_some() {
-        oauth::validate_session(&config, &url)?;
-    }
+    oauth::validate_session(&config, &url)?;
     let client = match timeout {
         Some(timeout) => {
             http::DashboardClient::new_with_mode_and_timeout(url, invocation_mode, timeout)?
         }
         None => http::DashboardClient::new_with_mode(url, invocation_mode)?,
     };
-    let client = match &config.auth.oauth {
-        Some(session) => client.bind_oauth(&session.resource)?,
-        None => client,
-    };
-    Ok(client.bind_profile(&config.auth.access_token, &config.auth.refresh_token))
+    let session = oauth::require_oauth_session(&config)?;
+    let client = client.bind_oauth(&session.resource)?;
+    Ok(client.bind_profile(&config.auth.access_token))
 }
 
 fn preserve_idempotency_key(command: &mut Command) {
@@ -391,6 +388,7 @@ mod tests {
     #[tokio::test]
     async fn replaced_profile_cannot_send_new_credentials_through_old_client() {
         use crate::config::{AuthConfig, DashboardConfig, OAuthSession};
+        std::env::set_var("YCLOUD_OAUTH_TEST_LOOPBACK", "1");
         let server = wiremock::MockServer::start().await;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("profile.toml");
@@ -399,7 +397,17 @@ mod tests {
                 base_url: server.uri(),
             },
             auth: AuthConfig {
-                oauth: None,
+                oauth: Some(OAuthSession {
+                    version: 2,
+                    business_base_url: Some(server.uri()),
+                    issuer: server.uri(),
+                    client_id: "fixture".into(),
+                    resource: format!("{}/api/cli", server.uri()),
+                    token_endpoint: Some(format!("{}/api/oauth/v1/token", server.uri())),
+                    revocation_endpoint: Some(format!("{}/api/oauth/v1/revoke", server.uri())),
+                    access_expires_at: 4_102_444_800,
+                    refresh_uncertain: false,
+                }),
                 token_type: "Bearer".into(),
                 access_token: "fixture-old-access".into(),
                 refresh_token: "fixture-old-refresh".into(),
@@ -433,11 +441,6 @@ mod tests {
             .contacts_metadata(&config.auth.access_token)
             .await
             .is_err());
-        assert!(client
-            .revoke(&config.auth.access_token, "fixture")
-            .await
-            .is_err());
-        assert!(client.refresh(&config.auth.refresh_token).await.is_err());
         assert!(server.received_requests().await.unwrap().is_empty());
         assert!(!format!("{client:?}").contains("fixture-old"));
     }
