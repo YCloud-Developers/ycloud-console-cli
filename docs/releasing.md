@@ -28,6 +28,16 @@ The npm packages are public, but npm provenance attestations are unavailable bec
 
 Keep all versions equal in `Cargo.toml`, the root `package.json`, and every package under `npm/`.
 
+### 0.4.0 standard OAuth only
+
+- `ycloud login` defaults to the production open-platform issuer and always performs standard discovery, PKCE and browser consent. `--oauth` is now a hidden no-op; legacy manual/scripted-code options are removed.
+- Other environments require explicit `--dashboard-url` and `--oauth-issuer`; saved standard session bindings remain authoritative for refresh, revoke and permission recovery.
+- Profiles without `auth.oauth` require a new login before queries or credential operations. Failures never select legacy endpoints or reinterpret old tokens. Do not delete or rewrite existing profiles on failed login.
+- Server `/api/cli/auth/**` compatibility is retained for already-released CLI versions. This is a CLI-only change and requires no server deployment or configuration change.
+- Preserve read-only query behavior, atomic credential saves and the unconfirmed-refresh marker. No local locks or server replay grace are introduced.
+
+The versioned sections below describe their historical releases.
+
 ### 0.3.1 local credential access
 
 Version `0.3.1` removes local profile file locking. Release notes must state that:
@@ -63,8 +73,8 @@ cargo fmt -- --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 npm run test:npm
-git tag v0.3.1
-git push origin v0.3.1
+git tag v0.4.0
+git push origin v0.4.0
 ```
 
 The workflow builds native binaries on GitHub-hosted macOS, Linux, and Windows runners, creates a private-repository GitHub Release for maintainers, publishes the npm packages, and updates the public Homebrew tap from the native npm tarballs. Windows ARM64 and x64 are distributed both as release ZIPs and through the npm launcher.

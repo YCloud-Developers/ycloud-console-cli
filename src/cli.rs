@@ -6,6 +6,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use crate::http::InvocationMode;
 
 pub const DEFAULT_DASHBOARD_URL: &str = "https://www.ycloud.com";
+pub const DEFAULT_OAUTH_ISSUER: &str = "https://open-platform.ycloud.com";
 
 #[derive(Debug, Parser, Clone)]
 #[command(name = "ycloud", version, about = "YCloud Console CLI")]
@@ -56,7 +57,7 @@ impl Cli {
 
 #[derive(Debug, Subcommand, Clone)]
 pub enum Command {
-    #[command(about = "Authorize ycloud with a logged-in YCloud Dashboard browser")]
+    #[command(about = "Authorize ycloud with standard OAuth and browser consent")]
     Login(LoginArgs),
     #[command(about = "Show the current Dashboard CLI identity and granted permissions")]
     Whoami,
@@ -132,21 +133,15 @@ pub enum AnalyticsCommand {
 
 #[derive(Debug, Args, Clone)]
 pub struct LoginArgs {
-    #[arg(
-        long,
-        help = "Use standard OAuth discovery and PKCE browser consent (opt-in trial)"
-    )]
+    // Accepted for existing scripts; standard OAuth is now the only login protocol.
+    #[arg(long, hide = true)]
     pub oauth: bool,
 
-    #[arg(long, requires = "oauth", help = "Trusted OAuth issuer origin")]
+    #[arg(long, help = "Trusted OAuth issuer origin")]
     pub oauth_issuer: Option<String>,
-    #[arg(long, requires = "oauth", help = "Registered public OAuth client ID")]
+    #[arg(long, help = "Registered public OAuth client ID")]
     pub oauth_client_id: Option<String>,
-    #[arg(
-        long,
-        requires = "oauth",
-        help = "CLI resource URI bound to the business origin"
-    )]
+    #[arg(long, help = "CLI resource URI bound to the business origin")]
     pub oauth_resource: Option<String>,
 
     #[arg(long, help = "Print the authorization URL without opening the browser")]
@@ -161,21 +156,6 @@ pub struct LoginArgs {
         help = "Additional atomic CLI permission; may be repeated"
     )]
     pub permissions: Vec<String>,
-
-    #[arg(long, help = "Authorization code returned by /api/cli/auth/authorize")]
-    pub code: Option<String>,
-
-    #[arg(long, help = "PKCE code verifier used for scripted login tests")]
-    pub code_verifier: Option<String>,
-
-    #[arg(long, help = "OAuth state used for scripted login tests")]
-    pub state: Option<String>,
-
-    #[arg(
-        long,
-        help = "Use manual copy/paste authorization code flow instead of localhost callback"
-    )]
-    pub manual: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -987,7 +967,7 @@ mod tests {
 
     #[test]
     fn login_defaults_to_basic_profile_without_explicit_permissions() {
-        let cli = Cli::try_parse_from(["ycloud", "login", "--manual"]).unwrap();
+        let cli = Cli::try_parse_from(["ycloud", "login"]).unwrap();
 
         let Command::Login(args) = cli.command else {
             panic!("expected login command");
@@ -1007,7 +987,6 @@ mod tests {
             "yc.integration.status.read",
             "--permission",
             "yc.contact.record.read",
-            "--manual",
         ])
         .unwrap();
 
@@ -1019,6 +998,39 @@ mod tests {
             args.permissions,
             ["yc.integration.status.read", "yc.contact.record.read"]
         );
+    }
+
+    #[test]
+    fn issuer_options_do_not_require_the_old_opt_in_flag() {
+        for extra in [vec![], vec!["--oauth"]] {
+            let mut argv = vec![
+                "ycloud",
+                "login",
+                "--oauth-issuer",
+                "https://open-platform.ycloud.com",
+            ];
+            argv.extend(extra);
+            let cli = Cli::try_parse_from(argv).unwrap();
+            let Command::Login(args) = cli.command else {
+                panic!("expected login");
+            };
+            assert_eq!(args.oauth_issuer.as_deref(), Some(DEFAULT_OAUTH_ISSUER));
+        }
+    }
+
+    #[test]
+    fn legacy_login_flags_are_rejected() {
+        for flags in [
+            vec!["--manual"],
+            vec!["--code", "fixture"],
+            vec!["--code-verifier", "fixture"],
+            vec!["--state", "fixture"],
+            vec!["--oauth=false"],
+        ] {
+            let mut argv = vec!["ycloud", "login"];
+            argv.extend(flags);
+            assert!(Cli::try_parse_from(argv).is_err());
+        }
     }
 
     #[test]

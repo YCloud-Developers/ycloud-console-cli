@@ -1,133 +1,28 @@
 use std::{
-    io::Read,
-    io::{self, Write},
-    net::{Shutdown, TcpListener, TcpStream},
     path::Path,
     process::Command,
-    thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::DateTime;
-use url::Url;
 
 use crate::{
     cli::{
         AnalyticsCallingLogsArgs, AnalyticsLogsArgs, AnalyticsRangeArgs, ContactStatsArgs,
         ContactsListArgs, LoginArgs, PermissionProfile,
     },
-    config::{self, AuthConfig, Config, DashboardConfig},
+    config::Config,
     http::{
         AnalyticsCallingLogsRequest, AnalyticsLogsRequest, AnalyticsRangeRequest,
-        ContactStatisticsRequest, ContactsSearchRequest, DashboardClient, TokenData,
+        ContactStatisticsRequest, ContactsSearchRequest, DashboardClient,
     },
-    pkce,
 };
 
 pub async fn login(client: &DashboardClient, config_path: &Path, args: LoginArgs) -> Result<()> {
     let authentication_client = client.authentication_client();
     let client = &authentication_client;
-    if args.oauth {
-        return crate::oauth::login(client, config_path, args).await;
-    }
-    let profile = args.profile.as_str().to_string();
-    let requested_permissions = args.permissions.clone();
-    let pkce = match args.code_verifier {
-        Some(verifier) => pkce::challenge_for_verifier(&verifier),
-        None => pkce::generate_pkce_pair(),
-    };
-    let state = args
-        .state
-        .unwrap_or_else(|| format!("ycloud_cli_{}", random_state_suffix()));
-    let manual = args.manual || args.code.is_some();
-    let (authorize_url, listener) = if manual {
-        (
-            client.authorize_url(&profile, &requested_permissions, &state, &pkce, None)?,
-            None,
-        )
-    } else {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .context("failed to bind localhost callback listener")?;
-        let redirect_uri = format!("http://{}/callback", listener.local_addr()?);
-        (
-            client.authorize_url(
-                &profile,
-                &requested_permissions,
-                &state,
-                &pkce,
-                Some(&redirect_uri),
-            )?,
-            Some(listener),
-        )
-    };
-
-    let code = match args.code {
-        Some(code) => code,
-        None if manual => {
-            println!("Open this URL in a logged-in Dashboard browser:");
-            println!("{authorize_url}");
-            println!();
-            println!("Copy data.code from the JSON response and paste it below.");
-            prompt("Authorization code: ")?
-        }
-        None => {
-            println!("Opening browser for Dashboard authorization:");
-            println!("{authorize_url}");
-            println!();
-            if !args.no_browser {
-                if let Err(error) = open_browser(authorize_url.as_str()) {
-                    println!("Could not open browser automatically: {error:#}");
-                    println!("Open the URL above in a logged-in Dashboard browser.");
-                }
-            }
-            println!("Waiting for browser callback on localhost...");
-            wait_for_callback(
-                listener.expect("listener must exist"),
-                &state,
-                Duration::from_secs(300),
-            )?
-        }
-    };
-
-    let token = client
-        .exchange_token(code.trim(), &pkce.code_verifier)
-        .await?
-        .require_data("token")?;
-
-    ensure_ycli_token(&token)?;
-    let mut config = Config {
-        dashboard: DashboardConfig {
-            base_url: client.base_url(),
-        },
-        auth: AuthConfig {
-            oauth: None,
-            token_type: token.token_type.clone(),
-            access_token: token.access_token.clone(),
-            refresh_token: token.refresh_token.clone(),
-            record_id: token.record_id.clone(),
-            requested_permissions: token.requested_permissions.clone(),
-            tenant_id: None,
-            user_id: None,
-        },
-    };
-
-    if let Ok(identity) = client
-        .whoami(&token.access_token)
-        .await
-        .and_then(|r| r.require_data("whoami"))
-    {
-        config.auth.tenant_id = Some(identity.tenant_id);
-        config.auth.user_id = Some(identity.user_id);
-    }
-
-    config.save(config_path)?;
-    println!(
-        "Login succeeded. Profile saved at {}.",
-        config_path.display()
-    );
-    Ok(())
+    crate::oauth::login(client, config_path, args).await
 }
 
 pub async fn reauthorize(
@@ -140,125 +35,16 @@ pub async fn reauthorize(
         client,
         config_path,
         LoginArgs {
-            oauth: current.auth.oauth.is_some(),
+            oauth: true,
             oauth_issuer: current.auth.oauth.as_ref().map(|s| s.issuer.clone()),
             oauth_client_id: current.auth.oauth.as_ref().map(|s| s.client_id.clone()),
             oauth_resource: current.auth.oauth.as_ref().map(|s| s.resource.clone()),
             no_browser: false,
             profile: PermissionProfile::Custom,
             permissions: requested_permissions,
-            code: None,
-            code_verifier: None,
-            state: None,
-            manual: false,
         },
     )
     .await
-}
-
-fn wait_for_callback(
-    listener: TcpListener,
-    expected_state: &str,
-    timeout: Duration,
-) -> Result<String> {
-    listener
-        .set_nonblocking(true)
-        .context("failed to configure localhost callback listener")?;
-    let deadline = Instant::now() + timeout;
-    loop {
-        match listener.accept() {
-            Ok((mut stream, _)) => return handle_callback(&mut stream, expected_state),
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                if Instant::now() >= deadline {
-                    anyhow::bail!("timed out waiting for browser callback");
-                }
-                thread::sleep(Duration::from_millis(100));
-            }
-            Err(error) => return Err(error).context("failed to accept browser callback"),
-        }
-    }
-}
-
-fn handle_callback(stream: &mut TcpStream, expected_state: &str) -> Result<String> {
-    let mut buffer = [0u8; 4096];
-    let size = stream
-        .read(&mut buffer)
-        .context("failed to read browser callback")?;
-    let request = String::from_utf8_lossy(&buffer[..size]);
-    let request_line = request
-        .lines()
-        .next()
-        .context("browser callback was empty")?;
-    let target = request_line
-        .split_whitespace()
-        .nth(1)
-        .context("browser callback request target is missing")?;
-    let url = Url::parse(&format!("http://127.0.0.1{target}"))
-        .context("failed to parse browser callback URL")?;
-
-    if url.path() != "/callback" {
-        write_callback_response(stream, 404, "ycloud login callback not found")?;
-        anyhow::bail!("unexpected browser callback path: {}", url.path());
-    }
-
-    let mut code = None;
-    let mut state = None;
-    let mut error = None;
-    let mut error_description = None;
-    for (key, value) in url.query_pairs() {
-        match key.as_ref() {
-            "code" => code = Some(value.into_owned()),
-            "state" => state = Some(value.into_owned()),
-            "error" => error = Some(value.into_owned()),
-            "error_description" => error_description = Some(value.into_owned()),
-            _ => {}
-        }
-    }
-
-    if state.as_deref() != Some(expected_state) {
-        write_callback_response(stream, 400, "ycloud login state mismatch")?;
-        anyhow::bail!("browser callback state does not match login request");
-    }
-    if let Some(error) = error {
-        write_callback_response(stream, 400, "ycloud login authorization failed")?;
-        if let Some(description) = error_description.filter(|value| !value.trim().is_empty()) {
-            anyhow::bail!("dashboard authorization failed: {error}: {description}");
-        }
-        anyhow::bail!("dashboard authorization failed: {error}");
-    }
-    let code = code.context("browser callback did not include authorization code")?;
-    write_callback_response(
-        stream,
-        200,
-        "ycloud login succeeded. You can close this browser tab.",
-    )?;
-    Ok(code)
-}
-
-fn write_callback_response(stream: &mut TcpStream, status: u16, message: &str) -> Result<()> {
-    let reason = match status {
-        200 => "OK",
-        400 => "Bad Request",
-        404 => "Not Found",
-        _ => "OK",
-    };
-    let body = format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>ycloud login</title></head><body><p>{}</p></body></html>",
-        message
-    );
-    let response = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
-    );
-    stream
-        .write_all(response.as_bytes())
-        .context("failed to write browser callback response")?;
-    stream
-        .flush()
-        .context("failed to flush browser callback response")?;
-    let _ = stream.shutdown(Shutdown::Write);
-    Ok(())
 }
 
 pub(crate) fn open_browser(url: &str) -> Result<()> {
@@ -459,66 +245,14 @@ pub async fn analytics_calling_logs(
 }
 
 pub async fn refresh(client: &DashboardClient, config_path: &Path) -> Result<()> {
-    let mut config = Config::load(config_path)?;
-    if config.auth.oauth.is_some() {
-        return crate::oauth::refresh(client, config_path, config).await;
-    }
-    let token = client
-        .refresh(&config.auth.refresh_token)
-        .await?
-        .require_data("refresh")?;
-    ensure_ycli_token(&token)?;
-    config.auth.token_type = token.token_type;
-    config.auth.access_token = token.access_token;
-    config.auth.refresh_token = token.refresh_token;
-    config.auth.record_id = token.record_id;
-    config.auth.requested_permissions = token.requested_permissions;
-    config.save(config_path)?;
-    println!("Token refreshed.");
-    Ok(())
+    let config = Config::load(config_path)?;
+    crate::oauth::refresh(client, config_path, config).await
 }
 
 pub async fn logout(client: &DashboardClient, config_path: &Path) -> Result<()> {
     let config = Config::load(config_path)?;
-    if config.auth.oauth.is_some() {
-        return crate::oauth::logout(client, config_path, config).await;
-    }
-    let _ = client
-        .revoke(&config.auth.access_token, &config.auth.record_id)
-        .await
-        .context("failed to revoke server-side token")?;
-    config::remove(config_path)?;
-    println!("Logged out. Local profile removed.");
-    Ok(())
-}
-
-fn prompt(label: &str) -> Result<String> {
-    print!("{label}");
-    io::stdout().flush().context("failed to flush stdout")?;
-    let mut line = String::new();
-    io::stdin()
-        .read_line(&mut line)
-        .context("failed to read stdin")?;
-    Ok(line.trim().to_string())
-}
-
-fn ensure_ycli_token(token: &TokenData) -> Result<()> {
-    if token.token_type != "Bearer" {
-        anyhow::bail!("backend returned an unsupported token type");
-    }
-    if !token.access_token.starts_with("YCLI.") {
-        anyhow::bail!("backend returned a non-YCLI access token");
-    }
-    if token.permission_model_version != 1 {
-        anyhow::bail!(
-            "unsupported CLI permission model version: {}",
-            token.permission_model_version
-        );
-    }
-    if token.requested_permissions.is_empty() {
-        anyhow::bail!("backend returned an empty CLI permission snapshot");
-    }
-    Ok(())
+    crate::oauth::require_oauth_session(&config)?;
+    crate::oauth::logout(client, config_path, config).await
 }
 
 fn analytics_range(args: &AnalyticsRangeArgs) -> Result<AnalyticsRangeRequest> {
@@ -543,81 +277,4 @@ fn now_millis() -> Result<i64> {
         .duration_since(UNIX_EPOCH)
         .context("system clock is before unix epoch")?;
     Ok(duration.as_millis() as i64)
-}
-
-fn random_state_suffix() -> String {
-    let bytes: [u8; 8] = rand::random();
-    URL_SAFE_NO_PAD.encode(bytes)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::handle_callback;
-    use anyhow::Result;
-    use std::{
-        io::{Read, Write},
-        net::{TcpListener, TcpStream},
-    };
-
-    #[test]
-    fn callback_error_includes_decoded_description() {
-        let (result, response) = invoke_callback(
-            "/callback?error=invalid_scope&error_description=permission%20is%20not%20active%3A%20yc.member.list.read&state=expected",
-            "expected",
-        );
-
-        let error = result.expect_err("authorization rejection should fail");
-        assert_eq!(
-            error.to_string(),
-            "dashboard authorization failed: invalid_scope: permission is not active: yc.member.list.read"
-        );
-        assert!(response.starts_with("HTTP/1.1 400 Bad Request"));
-    }
-
-    #[test]
-    fn callback_error_validates_state_before_reporting_authorization_error() {
-        let (result, response) = invoke_callback(
-            "/callback?error=access_denied&error_description=permission%20denied&state=unexpected",
-            "expected",
-        );
-
-        let error = result.expect_err("mismatched state should fail");
-        assert_eq!(
-            error.to_string(),
-            "browser callback state does not match login request"
-        );
-        assert!(response.contains("ycloud login state mismatch"));
-    }
-
-    fn invoke_callback(target: &str, expected_state: &str) -> (Result<String>, String) {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind callback listener");
-        let mut browser = TcpStream::connect(listener.local_addr().expect("listener address"))
-            .expect("connect callback client");
-        let (mut callback, _) = listener.accept().expect("accept callback client");
-        write!(
-            browser,
-            "GET {target} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
-        )
-        .expect("write callback request");
-        browser
-            .shutdown(std::net::Shutdown::Write)
-            .expect("finish callback request");
-
-        let result = handle_callback(&mut callback, expected_state);
-        drop(callback);
-
-        let mut response = String::new();
-        if let Err(error) = browser.read_to_string(&mut response) {
-            assert_eq!(
-                error.kind(),
-                std::io::ErrorKind::ConnectionReset,
-                "read callback response"
-            );
-            assert!(
-                !response.is_empty(),
-                "callback response should not be empty"
-            );
-        }
-        (result, response)
-    }
 }

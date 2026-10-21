@@ -368,7 +368,7 @@ async fn logout_cleans_local_profile_and_distinguishes_unconfirmed_remote_revoca
 }
 
 #[test]
-fn pre_oauth_config_without_protocol_marker_stays_legacy() {
+fn legacy_profile_is_not_reinterpreted_as_an_oauth_session() {
     let dir = tempfile::tempdir().unwrap();
     let location = dir.path().join("config.toml");
     std::fs::write(&location,"[dashboard]\nbase_url = 'https://www.ycloud.com'\n[auth]\ntoken_type = 'Bearer'\naccess_token = 'YCLI.fixture'\nrefresh_token = 'YCLI.refresh-fixture'\nrecord_id = 'legacy-fixture'\nrequested_permissions = ['yc.identity.current.read']\n").unwrap();
@@ -385,25 +385,27 @@ async fn real_cli_callback_flow_checks_issuer_state_and_persists_standard_sessio
         time::Duration,
     };
     let server = MockServer::start().await;
-    discovery(&server).await;
+    let business = MockServer::start().await;
+    discovery_for_resource(&server, &format!("{}/api/cli", business.uri())).await;
     Mock::given(method("POST")).and(path("/api/oauth/v1/token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"access_token":"opaque-login-fixture","refresh_token":"refresh-login-fixture","token_type":"Bearer","expires_in":3600,"scope":"yc.identity.current.read yc.tenant.list.read"})))
         .expect(1).mount(&server).await;
     Mock::given(method("GET"))
         .and(path("/api/cli/v1/whoami"))
         .respond_with(ResponseTemplate::new(401))
-        .mount(&server)
+        .mount(&business)
         .await;
     let dir = tempfile::tempdir().unwrap();
     let location = dir.path().join("config.toml");
     let mut child = Command::new(env!("CARGO_BIN_EXE_ycloud"))
         .args([
             "--dashboard-url",
-            &server.uri(),
+            &business.uri(),
             "--config",
             location.to_str().unwrap(),
             "login",
-            "--oauth",
+            "--oauth-issuer",
+            &server.uri(),
             "--no-browser",
         ])
         .stdout(Stdio::piped())
@@ -425,7 +427,14 @@ async fn real_cli_callback_flow_checks_issuer_state_and_persists_standard_sessio
             .unwrap()
             .unwrap();
     let authorize = url::Url::parse(&auth_url).unwrap();
+    assert_eq!(
+        authorize.origin(),
+        url::Url::parse(&server.uri()).unwrap().origin()
+    );
+    assert_eq!(authorize.path(), "/api/oauth/v1/authorize");
     let query: std::collections::HashMap<_, _> = authorize.query_pairs().into_owned().collect();
+    assert_eq!(query["resource"], format!("{}/api/cli", business.uri()));
+    assert_eq!(query["code_challenge_method"], "S256");
     let mut callback = url::Url::parse(&query["redirect_uri"]).unwrap();
     callback.query_pairs_mut().extend_pairs([
         ("code", "code-login-fixture"),
@@ -516,6 +525,15 @@ async fn real_cli_callback_flow_checks_issuer_state_and_persists_standard_sessio
     assert_eq!(config.auth.oauth.unwrap().issuer, server.uri());
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     let requests = server.received_requests().await.unwrap();
+    assert!(requests
+        .iter()
+        .all(|r| !r.url.path().starts_with("/api/cli/auth/")));
+    assert!(business
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .all(|r| r.url.path() == "/api/cli/v1/whoami"));
     let exchange = requests
         .iter()
         .find(|r| r.url.path() == "/api/oauth/v1/token")
