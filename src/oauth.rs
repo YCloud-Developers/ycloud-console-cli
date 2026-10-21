@@ -515,7 +515,6 @@ pub async fn login(dashboard: &DashboardClient, config_path: &Path, args: LoginA
         config.auth.tenant_id = Some(identity.tenant_id);
         config.auth.user_id = Some(identity.user_id);
     }
-    let _guard = crate::config::lock_profile(config_path).await?;
     config.save(config_path)?;
     println!(
         "OAuth login succeeded. Profile saved at {}.",
@@ -530,32 +529,17 @@ pub async fn prepare_session(
     config_path: &Path,
     business_base: &str,
 ) -> Result<OAuthClient> {
-    let _guard = crate::config::lock_profile(config_path).await?;
     *config = Config::load(config_path)?;
-    prepare_session_locked(config, config_path, business_base).await
+    upgrade_trial_session(config, config_path, business_base).await
 }
 
-pub(crate) async fn prepare_session_locked(
+async fn upgrade_trial_session(
     config: &mut Config,
     config_path: &Path,
     business_base: &str,
 ) -> Result<OAuthClient> {
-    let session = config
-        .auth
-        .oauth
-        .as_ref()
-        .context("missing OAuth session binding")?;
-    if business_base != config.dashboard.base_url {
-        bail!("OAuth business address override changed; log in again");
-    }
-    let client = OAuthClient::configured(
-        &session.issuer,
-        &session.client_id,
-        &session.resource,
-        business_base,
-    )?;
-    client.require_session(session)?;
-    if session.version == 1 {
+    let client = validate_session(config, business_base)?;
+    if config.auth.oauth.as_ref().is_some_and(|s| s.version == 1) {
         let metadata = client.discover().await?;
         let session = config
             .auth
@@ -571,14 +555,34 @@ pub(crate) async fn prepare_session_locked(
     Ok(client)
 }
 
+/// Validate a complete profile snapshot without locking, discovery or writes.
+/// Old trial bindings are upgraded only by the credential-writing paths.
+pub(crate) fn validate_session(config: &Config, business_base: &str) -> Result<OAuthClient> {
+    let session = config
+        .auth
+        .oauth
+        .as_ref()
+        .context("missing OAuth session binding")?;
+    if business_base != config.dashboard.base_url {
+        bail!("OAuth business address override changed; log in again");
+    }
+    let client = OAuthClient::configured(
+        &session.issuer,
+        &session.client_id,
+        &session.resource,
+        business_base,
+    )?;
+    client.require_session(session)?;
+    Ok(client)
+}
+
 pub async fn refresh(
     dashboard: &DashboardClient,
     config_path: &Path,
     _initial_config: Config,
 ) -> Result<()> {
-    let _guard = crate::config::lock_profile(config_path).await?;
     let mut config = Config::load(config_path)?;
-    let client = prepare_session_locked(&mut config, config_path, &dashboard.base_url()).await?;
+    let client = upgrade_trial_session(&mut config, config_path, &dashboard.base_url()).await?;
     let session = config
         .auth
         .oauth
@@ -631,11 +635,9 @@ pub async fn logout(
     config_path: &Path,
     _initial_config: Config,
 ) -> Result<()> {
-    let _guard = crate::config::lock_profile(config_path).await?;
     let mut config = Config::load(config_path)?;
     let result = async {
-        let client =
-            prepare_session_locked(&mut config, config_path, &dashboard.base_url()).await?;
+        let client = upgrade_trial_session(&mut config, config_path, &dashboard.base_url()).await?;
         let endpoint = config
             .auth
             .oauth

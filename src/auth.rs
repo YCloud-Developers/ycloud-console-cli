@@ -122,7 +122,6 @@ pub async fn login(client: &DashboardClient, config_path: &Path, args: LoginArgs
         config.auth.user_id = Some(identity.user_id);
     }
 
-    let _guard = crate::config::lock_profile(config_path).await?;
     config.save(config_path)?;
     println!(
         "Login succeeded. Profile saved at {}.",
@@ -280,16 +279,11 @@ pub(crate) fn open_browser(url: &str) -> Result<()> {
 }
 
 pub async fn whoami(client: &DashboardClient, config_path: &Path) -> Result<()> {
-    let _guard = crate::config::lock_profile(config_path).await?;
-    let mut config = Config::load(config_path)?;
+    let config = Config::load(config_path)?;
     let identity = client
         .whoami(&config.auth.access_token)
         .await?
         .require_data("whoami")?;
-    config.auth.tenant_id = Some(identity.tenant_id.clone());
-    config.auth.user_id = Some(identity.user_id.clone());
-    config.save(config_path)?;
-
     println!("userId: {}", identity.user_id);
     println!("tenantId: {}", identity.tenant_id);
     println!(
@@ -465,10 +459,8 @@ pub async fn analytics_calling_logs(
 }
 
 pub async fn refresh(client: &DashboardClient, config_path: &Path) -> Result<()> {
-    let guard = crate::config::lock_profile(config_path).await?;
     let mut config = Config::load(config_path)?;
     if config.auth.oauth.is_some() {
-        drop(guard);
         return crate::oauth::refresh(client, config_path, config).await;
     }
     let token = client
@@ -487,10 +479,8 @@ pub async fn refresh(client: &DashboardClient, config_path: &Path) -> Result<()>
 }
 
 pub async fn logout(client: &DashboardClient, config_path: &Path) -> Result<()> {
-    let guard = crate::config::lock_profile(config_path).await?;
     let config = Config::load(config_path)?;
     if config.auth.oauth.is_some() {
-        drop(guard);
         return crate::oauth::logout(client, config_path, config).await;
     }
     let _ = client

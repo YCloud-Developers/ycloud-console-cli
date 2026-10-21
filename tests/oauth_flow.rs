@@ -514,6 +514,7 @@ async fn real_cli_callback_flow_checks_issuer_state_and_persists_standard_sessio
     assert!(status.success());
     let config = ycloud_console_cli::config::Config::load(&location).unwrap();
     assert_eq!(config.auth.oauth.unwrap().issuer, server.uri());
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     let requests = server.received_requests().await.unwrap();
     let exchange = requests
         .iter()
@@ -759,7 +760,7 @@ async fn cli_logout_cleans_an_old_trial_profile_when_discovery_is_unavailable() 
 }
 
 #[tokio::test]
-async fn concurrent_refresh_processes_never_replay_the_same_rotation_token() {
+async fn concurrent_refresh_failures_are_reported_without_automatic_retries() {
     use std::process::{Command, Stdio};
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
@@ -770,21 +771,26 @@ async fn concurrent_refresh_processes_never_replay_the_same_rotation_token() {
     let location = dir.path().join("config.toml");
     saved_profile(&server, &location);
     let requests = Arc::new(AtomicUsize::new(0));
-    let rejected = Arc::new(AtomicUsize::new(0));
     let observed = requests.clone();
-    let replayed = rejected.clone();
-    Mock::given(method("POST")).and(path("/api/oauth/v1/token"))
+    Mock::given(method("POST"))
+        .and(path("/api/oauth/v1/token"))
         .respond_with(move |request: &wiremock::Request| {
-            let n = observed.fetch_add(1, Ordering::SeqCst);
-            let fields: std::collections::HashMap<_, _> = url::form_urlencoded::parse(&request.body).into_owned().collect();
-            let expected = if n == 0 { "old-refresh-fixture".to_string() } else { format!("refresh-{n}") };
-            if fields.get("refresh_token") != Some(&expected) {
-                replayed.fetch_add(1, Ordering::SeqCst);
-                return ResponseTemplate::new(400).set_body_json(json!({"error":"invalid_grant"}));
-            }
-            ResponseTemplate::new(200).set_delay(std::time::Duration::from_millis(250))
-                .set_body_json(json!({"access_token":format!("access-{}",n+1),"refresh_token":format!("refresh-{}",n+1),"token_type":"Bearer","expires_in":3600,"scope":"yc.identity.current.read"}))
-        }).expect(2).mount(&server).await;
+            observed.fetch_add(1, Ordering::SeqCst);
+            let fields: std::collections::HashMap<_, _> =
+                url::form_urlencoded::parse(&request.body)
+                    .into_owned()
+                    .collect();
+            assert_eq!(
+                fields.get("refresh_token").map(String::as_str),
+                Some("old-refresh-fixture")
+            );
+            ResponseTemplate::new(400)
+                .set_delay(std::time::Duration::from_millis(100))
+                .set_body_json(json!({"error":"invalid_grant"}))
+        })
+        .expect(1..=2)
+        .mount(&server)
+        .await;
     let launch = || {
         Command::new(env!("CARGO_BIN_EXE_ycloud"))
             .args(["--config", location.to_str().unwrap(), "refresh"])
@@ -802,14 +808,16 @@ async fn concurrent_refresh_processes_never_replay_the_same_rotation_token() {
     );
     for result in [a.unwrap(), b.unwrap()] {
         assert!(
-            result.status.success(),
+            !result.status.success(),
             "{}",
             String::from_utf8_lossy(&result.stderr)
         );
     }
-    assert_eq!(requests.load(Ordering::SeqCst), 2);
-    assert_eq!(rejected.load(Ordering::SeqCst), 0);
+    // Each process may submit once, or observe the other process's uncertain
+    // marker before HTTP. There is deliberately no cross-process serialization.
+    assert!((1..=2).contains(&requests.load(Ordering::SeqCst)));
     let saved = ycloud_console_cli::config::Config::load(&location).unwrap();
-    assert_eq!(saved.auth.refresh_token, "refresh-2");
-    assert!(!saved.auth.oauth.unwrap().refresh_uncertain);
+    assert_eq!(saved.auth.refresh_token, "old-refresh-fixture");
+    assert!(saved.auth.oauth.unwrap().refresh_uncertain);
+    assert!(!dir.path().join(".config.toml.lock").exists());
 }

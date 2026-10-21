@@ -53,41 +53,6 @@ fn legacy_oauth_version() -> u32 {
     1
 }
 
-/// A stable sidecar inode serializes profile read/rotate/write across processes.
-/// Keep the empty lock file after releasing it: deleting it could split waiters
-/// across different inodes while another process still holds the old lock.
-pub struct ProfileLock {
-    _file: fs::File,
-}
-
-pub async fn lock_profile(path: &Path) -> Result<ProfileLock> {
-    let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || -> Result<ProfileLock> {
-        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-            fs::create_dir_all(parent).context("failed to create profile lock directory")?;
-        }
-        let name = path.file_name().context("profile path has no filename")?;
-        let mut lock_name = std::ffi::OsString::from(".");
-        lock_name.push(name);
-        lock_name.push(".lock");
-        let lock_path = path.with_file_name(lock_name);
-        let mut options = fs::OpenOptions::new();
-        options.read(true).write(true).create(true).truncate(false);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let file = options
-            .open(lock_path)
-            .context("failed to open profile lock")?;
-        file.lock().context("failed to lock profile")?;
-        Ok(ProfileLock { _file: file })
-    })
-    .await
-    .context("profile lock task failed")?
-}
-
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let raw = fs::read_to_string(path)

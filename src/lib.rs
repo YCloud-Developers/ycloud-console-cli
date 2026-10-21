@@ -318,11 +318,12 @@ async fn saved_profile_client(
     invocation_mode: InvocationMode,
     timeout: Option<std::time::Duration>,
 ) -> Result<http::DashboardClient> {
-    let _guard = config::lock_profile(config_path).await?;
-    let mut config = Config::load(config_path)?;
+    // Writers replace the profile atomically. Bind the client to one complete
+    // read-only snapshot; a later credential change is rejected before HTTP.
+    let config = Config::load(config_path)?;
     let url = override_url.unwrap_or_else(|| config.dashboard.base_url.clone());
     if config.auth.oauth.is_some() {
-        oauth::prepare_session_locked(&mut config, config_path, &url).await?;
+        oauth::validate_session(&config, &url)?;
     }
     let client = match timeout {
         Some(timeout) => {
