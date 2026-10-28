@@ -6,7 +6,6 @@ use std::{
 use anyhow::{Context, Result};
 use chrono::{Days, Duration as ChronoDuration, LocalResult, NaiveDate, TimeZone, Utc};
 use chrono_tz::Tz;
-use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::{
@@ -26,45 +25,15 @@ pub async fn overview(
 ) -> Result<()> {
     let config = Config::load(config_path)?;
     let request = request(&args.filter)?;
-    let templates_request = AnalyticsTemplateSearchRequest {
-        analytics: request.clone(),
-        template_name: None,
-        page_no: 1,
-        page_size: 10,
-        sort_field: "total".to_string(),
-        sort_direction: "DESC".to_string(),
-    };
-    let token = &config.auth.access_token;
-    let (summary, trend, templates) = tokio::join!(
-        async {
-            client
-                .whatsapp_delivery_analytics(token, &request)
-                .await?
-                .require_data("analytics summary")
-        },
-        async {
-            client
-                .whatsapp_message_detail(token, &request)
-                .await?
-                .require_data("analytics trend")
-        },
-        async {
-            client
-                .whatsapp_template_statistics(token, &templates_request)
-                .await?
-                .require_data("template statistics")
-        },
-    );
+    let overview = client
+        .analytics_overview(&config.auth.access_token, &request)
+        .await?
+        .require_data("analytics overview")?;
+    let summary = overview.summary.clone().into_result();
+    let trend = overview.trend.clone().into_result();
+    let templates = overview.templates.clone().into_result();
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "range": request,
-                "summary": section(&summary),
-                "trend": section(&trend),
-                "templates": section(&templates),
-            }))?
-        );
+        println!("{}", serde_json::to_string_pretty(&overview)?);
     } else {
         println!("Analytics overview (operational analytics; not for billing reconciliation)");
         print_section("Message type summary", &summary, print_summary)?;
@@ -242,13 +211,6 @@ fn distinct(values: &[String]) -> Vec<String> {
         }
     }
     result
-}
-
-fn section<T: Serialize>(result: &Result<T>) -> Value {
-    match result {
-        Ok(data) => json!({"status": "ok", "data": data}),
-        Err(error) => json!({"status": "error", "error": section_error(error)}),
-    }
 }
 
 fn section_error(error: &anyhow::Error) -> Value {

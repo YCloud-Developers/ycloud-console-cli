@@ -56,6 +56,7 @@ pub struct OAuthMetadata {
     pub token_endpoint: String,
     pub revocation_endpoint: String,
     pub scopes: Vec<String>,
+    resource: String,
 }
 
 #[derive(Deserialize)]
@@ -91,10 +92,11 @@ impl OAuthClient {
         let resource_uri = safe_url(resource)?;
         if issuer != issuer_uri.as_str().trim_end_matches('/')
             || business_base != business_uri.as_str().trim_end_matches('/')
-            || resource_uri.origin() != business_uri.origin()
+            || (resource_uri.origin() != business_uri.origin()
+                && business_uri.origin() != issuer_uri.origin())
             || resource_uri.path() != "/api/cli"
             || resource_uri.query().is_some()
-            || resource != format!("{business_base}/api/cli")
+            || resource != format!("{}/api/cli", resource_uri.origin().ascii_serialization())
             || client_id.is_empty()
             || client_id.len() > 128
             || !client_id
@@ -134,7 +136,11 @@ impl OAuthClient {
                 && session.revocation_endpoint.is_none()
                 && self.business_base == self.issuer
                 && self.resource == format!("{}/api/cli", self.issuer) => {}
-            2 if session.business_base_url.as_deref() == Some(&self.business_base) => {
+            version @ (2 | 3)
+                if session.business_base_url.as_deref() == Some(&self.business_base)
+                    && (version == 3
+                        || self.resource == format!("{}/api/cli", self.business_base)) =>
+            {
                 self.endpoint(
                     session
                         .token_endpoint
@@ -164,6 +170,20 @@ impl OAuthClient {
     }
 
     pub async fn discover(&self) -> Result<OAuthMetadata> {
+        self.discover_metadata(false).await
+    }
+
+    /// Only an explicit login may adopt the logical audience advertised by the trusted AS.
+    /// Existing profiles never change their business address, resource or credentials on reads.
+    pub async fn discover_for_login(&mut self, explicit_resource: bool) -> Result<OAuthMetadata> {
+        let metadata = self
+            .discover_metadata(!explicit_resource && self.business_base == self.issuer)
+            .await?;
+        self.resource = metadata.resource.clone();
+        Ok(metadata)
+    }
+
+    async fn discover_metadata(&self, adopt_resource: bool) -> Result<OAuthMetadata> {
         let server: ServerMetadata = self.get("/.well-known/oauth-authorization-server").await?;
         if server.issuer != self.issuer
             || !contains(&server.code_challenge_methods_supported, "S256")
@@ -189,7 +209,14 @@ impl OAuthClient {
                 .map_err(|_| anyhow::anyhow!("OAuth resource discovery failed"))?,
         )
         .await?;
-        if resource.resource != self.resource()
+        // Validate the advertised URI through the same binding checks, including TLS/path.
+        Self::configured(
+            &self.issuer,
+            &self.client_id,
+            &resource.resource,
+            &self.business_base,
+        )?;
+        if (!adopt_resource && resource.resource != self.resource())
             || !contains(&resource.authorization_servers, &self.issuer)
             || !contains(&resource.bearer_methods_supported, "header")
             || resource.scopes_supported.is_empty()
@@ -204,6 +231,7 @@ impl OAuthClient {
             token_endpoint: server.token_endpoint,
             revocation_endpoint: server.revocation_endpoint,
             scopes: resource.scopes_supported,
+            resource: resource.resource,
         })
     }
 
@@ -459,13 +487,15 @@ pub async fn login(dashboard: &DashboardClient, config_path: &Path, args: LoginA
         .oauth_resource
         .clone()
         .unwrap_or_else(|| format!("{business_base}/api/cli"));
-    let client = OAuthClient::configured(
+    let mut client = OAuthClient::configured(
         issuer,
         args.oauth_client_id.as_deref().unwrap_or(CLIENT_ID),
         &resource,
         &business_base,
     )?;
-    let metadata = client.discover().await?;
+    let metadata = client
+        .discover_for_login(args.oauth_resource.is_some())
+        .await?;
     let scopes = requested_scopes(&args, &metadata)?;
     let pair = pkce::generate_pkce_pair();
     let state = pkce::generate_pkce_pair().code_verifier;
@@ -507,7 +537,7 @@ pub async fn login(dashboard: &DashboardClient, config_path: &Path, args: LoginA
             tenant_id: None,
             user_id: None,
             oauth: Some(OAuthSession {
-                version: 2,
+                version: 3,
                 issuer: client.issuer.clone(),
                 client_id: client.client_id.clone(),
                 resource: client.resource(),
@@ -519,7 +549,9 @@ pub async fn login(dashboard: &DashboardClient, config_path: &Path, args: LoginA
             }),
         },
     };
-    let business = dashboard.clone().bind_oauth(&client.resource)?;
+    let business = dashboard
+        .clone()
+        .bind_oauth_with_issuer(&client.resource, &client.issuer)?;
     if let Ok(identity) = business
         .whoami(&config.auth.access_token)
         .await
@@ -804,7 +836,7 @@ mod tests {
                 panic!("expected login");
             };
             assert_eq!(
-                login_issuer(&args, "https://www.ycloud.com").unwrap(),
+                login_issuer(&args, "https://open-platform.ycloud.com").unwrap(),
                 "https://open-platform.ycloud.com"
             );
             assert!(login_issuer(&args, "https://www-prepare.ycloud.com").is_err());

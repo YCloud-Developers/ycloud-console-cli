@@ -331,7 +331,7 @@ async fn saved_profile_client(
         None => http::DashboardClient::new_with_mode(url, invocation_mode)?,
     };
     let session = oauth::require_oauth_session(&config)?;
-    let client = client.bind_oauth(&session.resource)?;
+    let client = client.bind_oauth_with_issuer(&session.resource, &session.issuer)?;
     Ok(client.bind_profile(&config.auth.access_token))
 }
 

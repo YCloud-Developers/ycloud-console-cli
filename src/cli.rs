@@ -5,7 +5,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::http::InvocationMode;
 
-pub const DEFAULT_DASHBOARD_URL: &str = "https://www.ycloud.com";
+pub const DEFAULT_DASHBOARD_URL: &str = "https://open-platform.ycloud.com";
 pub const DEFAULT_OAUTH_ISSUER: &str = "https://open-platform.ycloud.com";
 
 #[derive(Debug, Parser, Clone)]
@@ -962,7 +962,7 @@ mod tests {
 
     #[test]
     fn dashboard_defaults_to_online() {
-        assert_eq!(DEFAULT_DASHBOARD_URL, "https://www.ycloud.com");
+        assert_eq!(DEFAULT_DASHBOARD_URL, "https://open-platform.ycloud.com");
     }
 
     #[test]

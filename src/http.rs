@@ -136,9 +136,23 @@ impl DashboardClient {
         self
     }
 
-    pub fn bind_oauth(mut self, resource: &str) -> Result<Self> {
+    pub fn bind_oauth(self, resource: &str) -> Result<Self> {
+        self.bind_oauth_checked(resource, None)
+    }
+
+    pub fn bind_oauth_with_issuer(self, resource: &str, issuer: &str) -> Result<Self> {
+        self.bind_oauth_checked(resource, Some(issuer))
+    }
+
+    fn bind_oauth_checked(mut self, resource: &str, issuer: Option<&str>) -> Result<Self> {
         let resource = Url::parse(resource).context("invalid OAuth business resource")?;
-        if resource.origin() != self.base_url.origin()
+        let platform_origin = issuer
+            .map(Url::parse)
+            .transpose()
+            .context("invalid OAuth issuer")?
+            .map(|value| value.origin() == self.base_url.origin())
+            .unwrap_or(false);
+        if (resource.origin() != self.base_url.origin() && !platform_origin)
             || resource.path() != "/api/cli"
             || self.base_url.path() != "/"
             || self.base_url.query().is_some()
@@ -254,6 +268,32 @@ impl DashboardClient {
             millis_to_rfc3339(request.end_time)?
         );
         self.get_json_safe(&primary, Some(access_token)).await
+    }
+
+    pub async fn analytics_overview(
+        &self,
+        token: &str,
+        request: &AnalyticsRequest,
+    ) -> Result<ApiEnvelope<AnalyticsOverview>> {
+        self.post_json_safe(
+            "/api/cli/v1/whatsapp/analytics/overview",
+            Some(token),
+            request,
+        )
+        .await
+    }
+
+    pub async fn waba_assignment_report(
+        &self,
+        token: &str,
+        waba_id: Option<&str>,
+    ) -> Result<ApiEnvelope<crate::waba_assignment::WabaAssignmentReport>> {
+        self.post_json_safe(
+            "/api/cli/v1/whatsapp/waba-assignments/search",
+            Some(token),
+            &serde_json::json!({"wabaId": waba_id}),
+        )
+        .await
     }
 
     pub async fn whatsapp_delivery_analytics(
@@ -523,8 +563,8 @@ impl DashboardClient {
             .base_url
             .join(path.trim_start_matches('/'))
             .with_context(|| format!("failed to build dashboard api url for {path}"))?;
-        if let Some(resource) = &self.oauth_resource {
-            if url.origin() != resource.origin()
+        if self.oauth_resource.is_some() {
+            if url.origin() != self.base_url.origin()
                 || !url.path().starts_with("/api/cli/")
                 || url.path().contains('%')
                 || !url.username().is_empty()
@@ -798,7 +838,8 @@ async fn decode_response<T: DeserializeOwned>(
                     status,
                     code: error.code,
                     message: error.message,
-                    retryable: error.retryable,
+                    // Retired endpoints are terminal even if a broken intermediary sets retryable.
+                    retryable: error.retryable && status != StatusCode::GONE,
                     details: error.details,
                     request_id: envelope.request_id,
                     trace_id: envelope.trace_id,
@@ -1086,7 +1127,7 @@ pub struct AnalyticsRangeRequest {
     pub end_time: i64,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalyticsRequest {
     #[serde(rename = "startTime")]
@@ -1094,13 +1135,13 @@ pub struct AnalyticsRequest {
     #[serde(rename = "endTime")]
     pub end_time: String,
     pub timezone: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub froms: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub region_codes: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub message_types: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub waba_ids: Vec<String>,
 }
 
@@ -1240,13 +1281,13 @@ pub struct AnalyticsCallingLogsRequest<'a> {
     pub page_size: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub condition: Option<&'a str>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub directions: Vec<&'a str>,
     #[serde(rename = "regionCodes", skip_serializing_if = "Vec::is_empty")]
     pub region_codes: Vec<&'a str>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<&'a str>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub status: Vec<&'a str>,
     #[serde(rename = "phoneNumberIds", skip_serializing_if = "Vec::is_empty")]
     pub phone_number_ids: Vec<&'a str>,
@@ -1301,5 +1342,47 @@ mod tests {
         assert_eq!(envelope.pagination.as_ref().unwrap().total, Some(42));
         assert_eq!(envelope.warnings[0].code, "partial");
         assert_eq!(envelope.warnings[0].message, "Partial data");
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct AnalyticsOverview {
+    pub range: AnalyticsRequest,
+    pub summary: OverviewSection<AnalyticsSummary>,
+    pub trend: OverviewSection<AnalyticsTrend>,
+    pub templates: OverviewSection<AnalyticsTemplatePage>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(tag = "status", rename_all = "lowercase", deny_unknown_fields)]
+pub enum OverviewSection<T> {
+    Ok { data: T },
+    Error { error: OverviewSectionError },
+}
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct OverviewSectionError {
+    pub code: String,
+    pub message: String,
+    pub retryable: bool,
+    pub request_id: Option<String>,
+    pub trace_id: Option<String>,
+}
+impl<T> OverviewSection<T> {
+    pub fn into_result(self) -> Result<T> {
+        match self {
+            Self::Ok { data } => Ok(data),
+            Self::Error { error } => Err(DashboardApiError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                code: error.code,
+                message: error.message,
+                retryable: error.retryable,
+                details: None,
+                request_id: error.request_id,
+                trace_id: error.trace_id,
+                retry_after: None,
+            }
+            .into()),
+        }
     }
 }
