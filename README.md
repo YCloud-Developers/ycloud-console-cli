@@ -7,10 +7,13 @@
 - `ycloud login` always uses standard OAuth discovery and PKCE S256, opens the browser consent flow, and receives the code through a validated localhost callback.
 - `ycloud whoami` reads the current Console CLI identity.
 - `ycloud tenants list` lists tenants available to the current Console CLI token.
+  Delegated employee sessions expose only their fixed target tenant and cannot switch workspaces.
 - `ycloud integrations status` and `ycloud contacts metadata` use the stable `/api/cli/v1/**` contract.
 - `ycloud inbox conversations export` creates one permission-scoped asynchronous task containing
   conversations, ordered message JSONL parts, a sanitized manifest, and a separate contacts
   artifact by default.
+  Message task queries and downloads retain `messageCompleteness` (`COMPLETE`, `PARTIAL`, or
+  `UNVERIFIED`); historical message tasks without verified accounting are not reported as complete.
 - `ycloud contacts export` provides the same artifact workflow for contact filters without first exporting conversations.
 - `ycloud contacts stats` counts newly created contacts for an RFC 3339 time range and can filter or group by Contact Source without paging through contact details.
 - `ycloud campaign list`, `messages`, and `analytics` query up to 100 tenant-scoped Campaigns; message rows are metadata-only and use an opaque keyset cursor.

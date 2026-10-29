@@ -498,6 +498,9 @@ fn print_downloads(
     } else {
         println!("taskId: {}", task.task_id);
         println!("status: {}", task.status);
+        if let Some(completeness) = &task.message_completeness {
+            println!("messageCompleteness: {}", completeness);
+        }
         for download in downloads {
             println!(
                 "{}: {} ({} bytes, sha256={})",
@@ -627,6 +630,7 @@ mod tests {
             previous_task_id: None,
             truncated: None,
             truncation_reason: None,
+            message_completeness: None,
             artifacts: Vec::new(),
             warnings: Vec::new(),
             error_code: None,

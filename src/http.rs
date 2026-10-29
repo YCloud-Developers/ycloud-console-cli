@@ -997,6 +997,8 @@ pub struct ExportTask {
     pub truncated: Option<bool>,
     #[serde(default)]
     pub truncation_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_completeness: Option<String>,
     #[serde(default)]
     pub artifacts: Vec<ExportArtifact>,
     #[serde(default)]
