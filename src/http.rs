@@ -563,15 +563,14 @@ impl DashboardClient {
             .base_url
             .join(path.trim_start_matches('/'))
             .with_context(|| format!("failed to build dashboard api url for {path}"))?;
-        if self.oauth_resource.is_some() {
-            if url.origin() != self.base_url.origin()
+        if self.oauth_resource.is_some()
+            && (url.origin() != self.base_url.origin()
                 || !url.path().starts_with("/api/cli/")
                 || url.path().contains('%')
                 || !url.username().is_empty()
-                || url.password().is_some()
-            {
-                anyhow::bail!("OAuth request is outside the bound CLI resource");
-            }
+                || url.password().is_some())
+        {
+            anyhow::bail!("OAuth request is outside the bound CLI resource");
         }
         Ok(url)
     }
