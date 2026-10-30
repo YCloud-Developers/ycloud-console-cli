@@ -251,37 +251,19 @@ async fn analytics_overview_calls_stable_v1_endpoints() {
         "wabaIds": ["waba-1"]
     });
     Mock::given(method("POST"))
-        .and(path("/api/cli/v1/whatsapp/analytics/delivery"))
-        .and(header("authorization", "Bearer YCLI.access"))
-        .and(body_json(expected_body.clone()))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "code": 0, "data": {"messageTypes": []}
-        })))
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path("/api/cli/v1/whatsapp/analytics/message-detail"))
+        .and(path("/api/cli/v1/whatsapp/analytics/overview"))
         .and(header("authorization", "Bearer YCLI.access"))
         .and(body_json(expected_body.clone()))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "code": 0,
-            "data": {"timezone": "Asia/Shanghai", "granularity": "DAY", "buckets": []}
+            "data": {
+                "range": expected_body,
+                "summary": {"status":"ok","data":{"messageTypes":[]}},
+                "trend": {"status":"ok","data":{"timezone":"Asia/Shanghai","granularity":"DAY","buckets":[]}},
+                "templates": {"status":"ok","data":{"pageNo":1,"pageSize":10,"totalElements":0,"records":[]}}
+            }
         })))
-        .mount(&server)
-        .await;
-    let mut template_body = expected_body.as_object().unwrap().clone();
-    template_body.insert("pageNo".to_string(), serde_json::json!(1));
-    template_body.insert("pageSize".to_string(), serde_json::json!(10));
-    template_body.insert("sortField".to_string(), serde_json::json!("total"));
-    template_body.insert("sortDirection".to_string(), serde_json::json!("DESC"));
-    Mock::given(method("POST"))
-        .and(path("/api/cli/v1/whatsapp/analytics/templates/search"))
-        .and(header("authorization", "Bearer YCLI.access"))
-        .and(body_json(serde_json::Value::Object(template_body)))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "code": 0,
-            "data": {"pageNo": 1, "pageSize": 10, "totalElements": 0, "records": []}
-        })))
+        .expect(1)
         .mount(&server)
         .await;
 
@@ -314,6 +296,55 @@ async fn analytics_overview_calls_stable_v1_endpoints() {
     )
     .await
     .unwrap();
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn analytics_overview_propagates_partial_failure_without_old_endpoint_fallback() {
+    for json in [false, true] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/cli/v1/whatsapp/analytics/overview"))
+            .and(header("authorization", "Bearer YCLI.access"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "code":0,"data":{
+                    "range":{"startTime":"2026-07-01T16:00:00.000Z","endTime":"2026-07-08T16:00:00.000Z","timezone":"Asia/Shanghai"},
+                    "summary":{"status":"ok","data":{"messageTypes":[]}},
+                    "trend":{"status":"error","error":{"code":"downstream_unavailable","message":"retry later","retryable":true,"requestId":"r1","traceId":"t1"}},
+                    "templates":{"status":"ok","data":{"pageNo":1,"pageSize":10,"totalElements":0,"records":[]}}
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("config.toml");
+        saved_config(server.uri()).save(&config_path).unwrap();
+        let args = ycloud_console_cli::cli::AnalyticsQueryArgs {
+            filter: ycloud_console_cli::cli::AnalyticsFilterArgs {
+                range: ycloud_console_cli::cli::AnalyticsRangeArgs {
+                    start_time: Some(1782921600000),
+                    end_time: Some(1783526400000),
+                },
+                preset: None,
+                timezone: "Asia/Shanghai".into(),
+                froms: vec![],
+                region_codes: vec![],
+                message_types: vec![],
+                waba_ids: vec![],
+            },
+            json,
+        };
+        let error = ycloud_console_cli::analytics::overview(
+            &DashboardClient::new(server.uri()).unwrap(),
+            &config_path,
+            args,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("downstream_unavailable"));
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
 }
 
 #[tokio::test]
