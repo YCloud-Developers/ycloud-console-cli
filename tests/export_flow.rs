@@ -63,6 +63,7 @@ async fn query_understands_partial_success_and_ready_artifacts() {
     data["progress"] = serde_json::json!(100);
     data["truncated"] = serde_json::json!(true);
     data["truncationReason"] = serde_json::json!("export_limit_reached");
+    data["messageCompleteness"] = serde_json::json!("PARTIAL");
     data["artifacts"] = serde_json::json!([
         {"type": "CONVERSATIONS", "format": "CSV", "fileName": "conversations.csv", "status": "READY", "recordCount": 2},
         {"type": "CONTACTS", "format": "CSV", "fileName": "contacts.csv", "status": "FAILED", "recordCount": 0},
@@ -88,6 +89,11 @@ async fn query_understands_partial_success_and_ready_artifacts() {
         .unwrap();
     assert!(value.terminal());
     assert_eq!(value.status, "PARTIAL_SUCCESS");
+    assert_eq!(value.message_completeness.as_deref(), Some("PARTIAL"));
+    assert_eq!(
+        serde_json::to_value(&value).unwrap()["messageCompleteness"],
+        "PARTIAL"
+    );
     assert_eq!(value.truncated, Some(true));
     assert_eq!(
         value.truncation_reason.as_deref(),

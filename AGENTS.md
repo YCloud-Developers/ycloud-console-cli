@@ -12,9 +12,9 @@ This is the Console/Dashboard-oriented YCloud CLI. It is separate from the exist
 
 ## Auth Model
 
-- `ycloud login` always uses standard OAuth discovery, PKCE S256, a bound CLI resource and issuer-validated `/oauth/callback`. Production defaults to `https://open-platform.ycloud.com`; a custom Dashboard origin requires explicit `--oauth-issuer`. Hidden `--oauth` is an accepted no-op for existing scripts.
+- `ycloud login` always uses standard OAuth discovery, PKCE S256, a bound CLI resource and issuer-validated `/oauth/callback`. Production business and issuer default to `https://open-platform.ycloud.com`; a new explicit login binds the logical CLI resource returned by trusted discovery; a custom Dashboard origin requires explicit `--oauth-issuer`. Hidden `--oauth` is an accepted no-op for existing scripts.
 - CLI grants use stable atomic permissions such as `yc.contact.record.read`. `--profile` selects a backend-owned preset and repeatable `--permission` adds atoms; Dashboard role authorities remain an internal backend mapping only.
-- Standard OAuth tokens are opaque. Saved `auth.oauth` bindings select standard refresh/revoke; profiles without bindings are rejected before HTTP with a new-login prompt. Never reinterpret legacy tokens or fall back to `/api/cli/auth/**`. The server keeps those endpoints for previously released CLI binaries.
+- Standard OAuth tokens are opaque. Saved `auth.oauth` bindings select standard refresh/revoke; profiles without bindings are rejected before HTTP with a new-login prompt. Never reinterpret legacy tokens or fall back to `/api/cli/auth/**`. Retired Web business endpoints return410; legacy auth is not a fallback.
 - Standard sessions persist discovered token/revoke endpoints and the business origin. Validate bindings before HTTP, disable redirects/proxies, and never replay an unconfirmed refresh. Loopback HTTP requires `YCLOUD_OAUTH_TEST_LOOPBACK=1`.
 - Local config is stored under `~/.ycloud/config.toml`.
 - Do not create or open profile lock files. Read-only queries must not write config or migrate trial profiles. Credential writes keep atomic saves and the unknown-refresh marker, but do not promise cross-process serialization; server replay protection can reject concurrent refreshes and revoke the grant.

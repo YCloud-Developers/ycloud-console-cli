@@ -7,17 +7,20 @@
 - `ycloud login` always uses standard OAuth discovery and PKCE S256, opens the browser consent flow, and receives the code through a validated localhost callback.
 - `ycloud whoami` reads the current Console CLI identity.
 - `ycloud tenants list` lists tenants available to the current Console CLI token.
+  Delegated employee sessions expose only their fixed target tenant and cannot switch workspaces.
 - `ycloud integrations status` and `ycloud contacts metadata` use the stable `/api/cli/v1/**` contract.
 - `ycloud inbox conversations export` creates one permission-scoped asynchronous task containing
   conversations, ordered message JSONL parts, a sanitized manifest, and a separate contacts
   artifact by default.
+  Message task queries and downloads retain `messageCompleteness` (`COMPLETE`, `PARTIAL`, or
+  `UNVERIFIED`); historical message tasks without verified accounting are not reported as complete.
 - `ycloud contacts export` provides the same artifact workflow for contact filters without first exporting conversations.
 - `ycloud contacts stats` counts newly created contacts for an RFC 3339 time range and can filter or group by Contact Source without paging through contact details.
 - `ycloud campaign list`, `messages`, and `analytics` query up to 100 tenant-scoped Campaigns; message rows are metadata-only and use an opaque keyset cursor.
 - `ycloud campaign export` streams up to 1,000,000 metadata-only message rows as independently verified JSONL parts plus a manifest.
-- `ycloud whatsapp waba-assignment list` automatically pages and joins the current WABA phone inventory, direct and team-expanded human assignments, and normalized routing rules. It never treats a partial backend failure as an unassigned phone.
+- `ycloud whatsapp waba-assignment list` uses the platform-owned WABA report to retrieve the complete phone inventory, direct and team-expanded human assignments, and normalized routing rules. It never treats a partial backend failure as an unassigned phone.
 - `ycloud analytics overview`, `trend`, and `templates` use the stable WhatsApp analytics contract. The CLI sends RFC 3339 time values and an IANA timezone such as `Asia/Shanghai`.
-- Business commands use only the stable `/api/cli/v1/**` contract and never fall back to `/api/cli/read/**`. The legacy adapters remain server-side for CLI v0.1.3 compatibility.
+- Business commands use only the stable `/api/cli/v1/**` contract and never fall back to `/api/cli/read/**`. Old Web business routes return HTTP410 with upgrade guidance.
 - Every HTTP attempt sends a new `X-Request-Id`; attempts from one command share a non-secret invocation ID and mode.
 - `ycloud contacts list`, `ycloud analytics logs`, and `ycloud analytics calling-logs` use stable web-owned v1 contracts. CLI tokens do not call ordinary Dashboard paths.
 - `ycloud refresh` rotates the refresh token.
@@ -36,13 +39,15 @@ ycloud refresh
 ycloud logout
 ```
 
-Production defaults to issuer `https://open-platform.ycloud.com`, business origin
-`https://www.ycloud.com`, and resource `https://www.ycloud.com/api/cli`. For other environments,
-set both `--dashboard-url` and `--oauth-issuer`; the resource defaults to the business origin
-plus `/api/cli`. For example:
+Production defaults to issuer and business origin `https://open-platform.ycloud.com`.
+During explicit login, the CLI takes the logical `/api/cli` resource from that trusted issuer's
+protected-resource metadata. The logical audience may remain `https://www.ycloud.com/api/cli`;
+it is not the HTTP destination. Custom business addresses still require an explicit issuer.
+When the business and issuer origins differ, the resource must remain on the business origin.
+For a platform environment, use its platform origin for both:
 
 ```bash
-ycloud --dashboard-url https://www-prepare.ycloud.com \
+ycloud --dashboard-url https://open-platform-prepare.ycloud.com \
   --config /tmp/ycloud-prepare.toml login --profile basic \
   --oauth-issuer https://open-platform-prepare.ycloud.com
 ```
@@ -65,18 +70,21 @@ The OAuth service ingress must forward `/.well-known/oauth-authorization-server`
 independent and is not required for CLI authorization. HTTPS is required except for
 127.0.0.1 mock servers with the explicit `YCLOUD_OAUTH_TEST_LOOPBACK=1` switch. Discovery or authorization failure never falls back to legacy authentication.
 
-OAuth options `--oauth-issuer`, `--oauth-client-id`, and `--oauth-resource` separate the trusted authorization server from the business origin supplied with `--dashboard-url`. Defaults retain the current same-origin CLI resource.
+OAuth options `--oauth-issuer`, `--oauth-client-id`, and `--oauth-resource` separate the trusted authorization server from the business origin supplied with `--dashboard-url`. The issuer metadata remains authoritative; an explicit --oauth-resource must exactly match it.
 
-Both metadata documents are fetched from the explicit trusted issuer. With separate domains, set `--dashboard-url` to the existing Web origin, `--oauth-issuer` to the OAuth service origin, and `--oauth-resource` to `<web-origin>/api/cli`. The Web domain needs no new discovery route.
-
-Saved version 2 standard sessions bind issuer, client, resource, business origin and discovered token/revoke endpoints. Endpoints must use the issuer origin; business requests must remain under `/api/cli/`. Redirects and environment proxies are disabled for standard OAuth and its business calls. Old trial sessions upgrade only after same-origin trusted discovery, retaining the original grant. Unsupported or inconsistent versions require a new login.
+Both metadata documents are fetched from the explicit trusted issuer. New version3 sessions bind
+issuer, client, advertised resource, business origin and discovered token/revoke endpoints. Only an
+explicit login adopts a logical audience on a different origin when business and issuer are the
+same platform origin. Existing version1/2 profiles retain their original stricter bindings and are
+never rewritten by read-only commands. All token requests remain form encoded with explicit
+resource; the WorkBuddy-only JSON or missing-resource compatibility does not apply to CLI.
 
 The CLI does not create or open profile lock files. Read-only queries, including `whoami`, use an atomic profile snapshot without updating the profile. They work with a readable config in a read-only directory, including original same-origin standard OAuth trial profiles. Login, explicit `refresh`, logout and trial-profile upgrades still require write access; queries do not refresh tokens automatically. Profile saves remain atomic, but credential operations are not serialized across processes: concurrent refreshes can be rejected by server replay protection and revoke the grant, requiring a new login. Do not run concurrent credential updates against the same config. A failed or unknown refresh still requires a new login instead of retrying the old refresh token. Permission-recovery commands preserve the saved Web origin, issuer, client and resource. Business clients bind their address and credentials to the same snapshot. A replaced profile cannot send its credentials through an older client; retry the command after a profile change. Source builds require Rust 1.89 or later.
 
 Saved standard sessions bind issuer, client and resource. Business commands reject a
 foreign `--dashboard-url`, and refresh/logout use the saved standard endpoints. Refresh atomically
 replaces the token pair and rejects scope expansion; code exchange and rotation are not
-retried. Before rotation, the CLI atomically marks its result as unconfirmed; an interruption requires a new login instead of reusing the old refresh token. Logout removes local credentials even if the server cannot confirm revocation, reports that distinction, and directs the user to YCloud authorization management. Profiles created with legacy authentication require `ycloud login` again before queries, refresh or logout; their tokens are not converted or sent to either protocol. A successful new login replaces the local profile. Existing legacy grants can be revoked in YCloud authorization management. Server-side legacy endpoints remain available for previously released CLI versions. The CLI is distributed through the existing npm and Homebrew channels.
+retried. Before rotation, the CLI atomically marks its result as unconfirmed; an interruption requires a new login instead of reusing the old refresh token. Logout removes local credentials even if the server cannot confirm revocation, reports that distinction, and directs the user to YCloud authorization management. Profiles created with legacy authentication require `ycloud login` again before queries, refresh or logout; their tokens are not converted or sent to either protocol. A successful new login replaces the local profile. Existing legacy grants can be revoked in YCloud authorization management. Old Web registered business routes return410 without redirect/retry; retired legacy login endpoints are not a login fallback. The CLI is distributed through the existing npm and Homebrew channels.
 
 ## Installation
 
@@ -183,7 +191,7 @@ ycloud analytics logs --start-time 1782921600000 --end-time 1783526400000 --dire
 ycloud analytics calling-logs --start-time 1782921600000 --end-time 1783526400000 --directions BUSINESS_INITIATED --sources CALLING --status COMPLETED
 ```
 
-Analytics is operational reporting and must not be used for billing reconciliation. `overview` requests the summary, trend, and first template page concurrently. It prints successful sections even if another section fails, then exits nonzero. Large template result sets use the existing asynchronous export lifecycle and produce `TEMPLATE_STATISTICS` plus manifest artifacts.
+Analytics is operational reporting and must not be used for billing reconciliation. `overview` calls the shared platform composite once; the platform returns explicit summary, trend and first-template-page section outcomes. It prints successful sections even if another section fails, then exits nonzero. Large template result sets use the existing asynchronous export lifecycle and produce `TEMPLATE_STATISTICS` plus manifest artifacts.
 
 Contact statistics accepts a maximum 90-day half-open range `[startTime,endTime)`. Repeat `--source` to filter several sources; combine it with `--group-by source` to group only the selected sources. The command always prints stable JSON. Campaign commands also print stable JSON so cursors, availability, and task metadata remain machine-readable.
 
@@ -278,10 +286,21 @@ In the default browser flow, an authorization rejection returns to the localhost
 
 ## Config
 
-Config is stored at `~/.ycloud/config.toml` (`%USERPROFILE%\.ycloud\config.toml` on Windows). The Dashboard defaults to `https://www.ycloud.com`. Override the config path with `YCLOUD_CONFIG` and the Dashboard base URL with `YCLOUD_DASHBOARD_URL`.
+Config is stored at `~/.ycloud/config.toml` (`%USERPROFILE%\.ycloud\config.toml` on Windows). The business origin defaults to `https://open-platform.ycloud.com`. Override the config path with `YCLOUD_CONFIG` and the Dashboard base URL with `YCLOUD_DASHBOARD_URL`.
 
 Tokens are persisted in this first P0 implementation so the backend flow can be tested end to end. The production hardening path is system keychain first, file fallback with strict permissions and an explicit warning.
 
 ## License
 
 MIT
+
+
+## 0.5.0 platform cutover
+
+Upgrade the binary, then explicitly run `ycloud login` to replace the saved Web-origin profile.
+Existing TOML overrides and tokens are not moved automatically. The old Web Ingress is unchanged;
+registered old CLI business methods return `cli_upgrade_required` (410), without automatic retry,
+redirect or reauthorization. A legacy profile may fail local validation before HTTP; upgrade and
+log in explicitly in that case. Old export task IDs cannot be queried, downloaded or retried on
+the platform. Submit the original parameters as a new export. The unrelated API-key CLI and
+`~/.ycli` remain unchanged. Historical standard OAuth refresh/revoke remain supported.
