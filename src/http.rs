@@ -575,6 +575,77 @@ impl DashboardClient {
         Ok(url)
     }
 
+    pub(crate) async fn campaign_read<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        token: &str,
+    ) -> Result<ApiEnvelope<T>> {
+        self.get_json_safe(path, Some(token)).await
+    }
+
+    pub(crate) async fn campaign_post<T: DeserializeOwned, B: Serialize + ?Sized>(
+        &self,
+        path: &str,
+        token: &str,
+        body: &B,
+    ) -> Result<ApiEnvelope<T>> {
+        let request = async {
+            let response = Self::campaign_write_transport()?
+                .post(self.join(path)?)
+                .headers(self.attempt_headers(Some(token))?)
+                .json(body)
+                .send()
+                .await
+                .map_err(map_request_error)?;
+            parse_response(response).await
+        };
+        tokio::time::timeout(self.timeout, request)
+            .await
+            .map_err(|_| anyhow::anyhow!("Campaign request timed out"))?
+    }
+
+    pub(crate) async fn campaign_upload<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        target: &str,
+        token: &str,
+        file: tokio::fs::File,
+        size: u64,
+    ) -> Result<ApiEnvelope<T>> {
+        let url = self.join(path)?;
+        if self.oauth_resource.is_none()
+            || Url::parse(target).ok().as_ref() != Some(&url)
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            anyhow::bail!("Upload target is outside the bound CLI route");
+        }
+        let stream = tokio_util::io::ReaderStream::new(file);
+        let mut headers = self.attempt_headers(Some(token))?;
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/octet-stream"),
+        );
+        let response = Self::campaign_write_transport()?
+            .put(url)
+            .headers(headers)
+            .header(reqwest::header::CONTENT_LENGTH, size)
+            .timeout(Duration::from_secs(600))
+            .body(reqwest::Body::wrap_stream(stream))
+            .send()
+            .await
+            .map_err(|error| map_request_error(error.without_url()))?;
+        parse_response(response).await
+    }
+
+    fn campaign_write_transport() -> Result<reqwest::Client> {
+        Ok(reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never())
+            .build()?)
+    }
+
     async fn get_json_safe<T: DeserializeOwned>(
         &self,
         path: &str,
@@ -932,7 +1003,7 @@ fn parse_retry_after(value: Option<&HeaderValue>) -> Option<Duration> {
     Some(Duration::from_millis(millis))
 }
 
-fn random_identifier(prefix: &str) -> String {
+pub(crate) fn random_identifier(prefix: &str) -> String {
     format!("{prefix}-{:032x}", rand::random::<u128>())
 }
 

@@ -200,6 +200,18 @@ pub enum ContactsCommand {
 
 #[derive(Debug, Subcommand, Clone)]
 pub enum CampaignCommand {
+    /// Get activity status and an optional operation receipt.
+    Get(crate::whatsapp_campaign::CampaignStatusArgs),
+    /// Estimate an audience from its source definition.
+    Estimate(crate::whatsapp_campaign::InputArgs),
+    /// Prepare a campaign draft and its audience.
+    Prepare(crate::whatsapp_campaign::WriteArgs),
+    /// Send one trial to the explicitly selected target.
+    Test(crate::whatsapp_campaign::CampaignWriteArgs),
+    /// Submit a prepared campaign.
+    Submit(crate::whatsapp_campaign::CampaignWriteArgs),
+    /// Cancel a campaign.
+    Cancel(crate::whatsapp_campaign::CampaignWriteArgs),
     #[command(about = "List tenant-scoped Campaign metadata")]
     List(CampaignListArgs),
     #[command(about = "Search metadata-only messages across Campaigns")]
@@ -367,6 +379,16 @@ pub struct ContactStatsArgs {
 
 #[derive(Debug, Subcommand, Clone)]
 pub enum WhatsappCommand {
+    /// Read, prepare and submit WhatsApp templates.
+    Template {
+        #[command(subcommand)]
+        command: crate::whatsapp_campaign::TemplateCommand,
+    },
+    /// Upload and check a WhatsApp attachment.
+    Asset {
+        #[command(subcommand)]
+        command: crate::whatsapp_campaign::AssetCommand,
+    },
     #[command(about = "Inspect WABA phone numbers, assignments, and routing rules")]
     WabaAssignment {
         #[command(subcommand)]

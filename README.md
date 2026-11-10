@@ -304,3 +304,53 @@ redirect or reauthorization. A legacy profile may fail local validation before H
 log in explicitly in that case. Old export task IDs cannot be queried, downloaded or retried on
 the platform. Submit the original parameters as a new export. The unrelated API-key CLI and
 `~/.ycli` remain unchanged. Historical standard OAuth refresh/revoke remain supported.
+
+
+## WhatsApp Campaign and templates
+
+Writes show a preview by default. Add `--apply` to review the current preview and type its ID to confirm. The CLI supplies confirmation fields and sends the confirmed request once. Keep the operation ID for status queries.
+
+Save a preparation request as `campaign.json`. This example uses synthetic identifiers and a template without variables.
+
+```json
+{
+  "name": "Example campaign",
+  "fromPhone": "+12025550124",
+  "wabaId": "your-waba",
+  "templateId": "your-approved-template",
+  "language": "en_US",
+  "source": {"kind": "SEGMENTS", "segmentIds": ["your-segment"]},
+  "bindings": [],
+  "sendType": "NOW"
+}
+```
+
+```sh
+ycloud whatsapp template list --waba-id your-waba --purpose CAMPAIGN
+ycloud campaign prepare --input campaign.json
+ycloud campaign prepare --input campaign.json --apply
+ycloud campaign get --campaign-id YOUR_CAMPAIGN_ID --operation-id YOUR_OPERATION_ID
+```
+
+`campaign estimate` accepts a JSON object containing just `source` for segments, a dynamic filter or all visible contacts. For trial, pass `resourceVersion`, `sampleId` and the explicit `testTarget` in the JSON file. For submit and cancel, pass the current `resourceVersion`. Use the campaign ID as a flag on these three commands. A queued trial can be queried with `campaign get`; its successful receipt includes `messageId`. Use the returned `nextPollAfterSeconds` before checking again.
+
+```sh
+ycloud whatsapp asset upload --purpose audience --content-type application/vnd.openxmlformats-officedocument.spreadsheetml.sheet --file audience.xlsx --apply
+ycloud whatsapp asset get --asset-id YOUR_ASSET_ID
+ycloud whatsapp template options --waba-id your-waba
+ycloud whatsapp template prepare --input template.json --apply
+ycloud whatsapp template get --waba-id your-waba --operation-id YOUR_PREPARATION_ID
+ycloud whatsapp template submit --waba-id your-waba --input submission.json --apply
+```
+
+For file audiences, use the ready asset ID and target column ID returned by the asset query. The upload sends bytes only to the exact OAuth-bound CLI content route for that asset. For templates, query creation options before preparing the JSON, then send `preparationOperationId` and `preparedVersion` in the submission JSON. Template submission acceptance and template approval are separate states.
+
+If you are already using the YCloud MCP connector in WorkBuddy, use `whatsapp asset pair-upload` to upload a local Campaign file without a CLI login:
+
+```sh
+ycloud --dashboard-url https://open-platform-prepare.ycloud.com whatsapp asset pair-upload \
+  --purpose audience --waba-id YOUR_WABA_ID \
+  --content-type application/vnd.openxmlformats-officedocument.spreadsheetml.sheet --file audience.xlsx
+```
+
+For an image used by a Campaign, choose `--purpose campaign-media --content-type image/png`. Use the Platform environment of your WorkBuddy connector. Share only the JSON printed by the CLI, confirm the upload in WorkBuddy, then paste the returned `assetId` into the same waiting terminal. WorkBuddy checks that the asset reaches `READY`. If the outcome is uncertain, check the existing asset before creating a new pairing.
