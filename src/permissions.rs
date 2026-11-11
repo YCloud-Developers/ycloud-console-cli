@@ -141,6 +141,14 @@ fn static_permissions(command: &Command) -> Vec<&'static str> {
                     command: WabaAssignmentCommand::List(_),
                 },
         } => WABA_ASSIGNMENT_PERMISSIONS.to_vec(),
+        Command::Campaign {
+            command: CampaignCommand::Get(_),
+        } => vec!["yc.campaign.record.read"],
+        Command::Campaign {
+            command: CampaignCommand::Estimate(_),
+        } => vec!["yc.contact.record.read"],
+        // Paid or state-changing commands require a fresh explicit confirmation after reauthorization.
+        Command::Campaign { .. } | Command::Whatsapp { .. } => vec![],
         Command::Inbox {
             command:
                 InboxCommand::Conversations {

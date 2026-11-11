@@ -712,7 +712,7 @@ fn safe_url(value: &str) -> Result<Url> {
     }
     Ok(uri)
 }
-fn origin(value: &str) -> Result<Url> {
+pub(crate) fn origin(value: &str) -> Result<Url> {
     let uri = safe_url(value)?;
     if uri.path() != "/" || uri.query().is_some() {
         bail!("OAuth base URL must be an origin");

@@ -7,9 +7,11 @@ pub mod export;
 pub mod http;
 pub mod oauth;
 mod oauth_callback;
+mod paired_upload;
 pub mod permissions;
 pub mod pkce;
 pub mod waba_assignment;
+pub mod whatsapp_campaign;
 
 use std::io::{self, Write};
 use std::path::Path;
@@ -26,6 +28,21 @@ use http::{DashboardApiError, InvocationMode};
 
 pub async fn run() -> Result<()> {
     let mut cli = Cli::parse();
+    if let Command::Whatsapp {
+        command:
+            WhatsappCommand::Asset {
+                command: whatsapp_campaign::AssetCommand::PairUpload(args),
+            },
+    } = &cli.command
+    {
+        return paired_upload::run(
+            cli.dashboard_url
+                .as_deref()
+                .unwrap_or(DEFAULT_DASHBOARD_URL),
+            args,
+        )
+        .await;
+    }
     preserve_idempotency_key(&mut cli.command);
     let config_path = cli.config_path()?;
     let invocation_mode = cli.invocation_mode()?;
@@ -193,6 +210,7 @@ async fn execute_once(
                 CampaignCommand::Export(args) => {
                     campaign::export_messages(&client, config_path, args.clone()).await
                 }
+                command => whatsapp_campaign::campaign(&client, config_path, command).await,
             }
         }
         Command::Whatsapp { command } => {
@@ -203,6 +221,12 @@ async fn execute_once(
                         waba_assignment::list(&client, config_path, args.clone()).await
                     }
                 },
+                WhatsappCommand::Template { command } => {
+                    whatsapp_campaign::template(&client, config_path, command).await
+                }
+                WhatsappCommand::Asset { command } => {
+                    whatsapp_campaign::asset(&client, config_path, command).await
+                }
             }
         }
         Command::Inbox { command } => {
