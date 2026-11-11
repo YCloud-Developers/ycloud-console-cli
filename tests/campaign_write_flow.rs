@@ -139,7 +139,13 @@ async fn preview_requires_confirmation_and_lost_trial_reply_reads_original_recei
 
 #[tokio::test]
 async fn native_upload_streams_exact_bytes_only_to_the_bound_route() {
-    for same_origin in [true, false] {
+    for (same_origin, recovered_state) in [
+        (true, None),
+        (false, None),
+        (true, Some("FAILED")),
+        (true, Some("RECEIVING")),
+        (true, Some("PARSING")),
+    ] {
         let server = MockServer::start().await;
         let other = MockServer::start().await;
         let dir = tempfile::tempdir().unwrap();
@@ -161,18 +167,29 @@ async fn native_upload_streams_exact_bytes_only_to_the_bound_route() {
             },
             content_route
         );
-        Mock::given(method("POST")).and(path(route))
+        Mock::given(method("POST")).and(path(&route))
             .and(body_partial_json(json!({"phase":"EXECUTE"})))
             .respond_with(ok(json!({"phase":"EXECUTE","assetId":PREVIEW,"upload":{"method":"PUT","url":target,"expiresAt":4102444800000_i64}})))
             .expect(1).mount(&server).await;
+        let put_response = if recovered_state.is_some() {
+            ResponseTemplate::new(503)
+        } else {
+            ok(json!({"phase":"EXECUTE","assetId":PREVIEW,"assetStatus":"PARSING"}))
+        };
+        if let Some(state) = recovered_state {
+            Mock::given(method("GET"))
+                .and(path(format!("{route}/{PREVIEW}")))
+                .respond_with(ok(json!({"assetId":PREVIEW,"state":state})))
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
         Mock::given(method("PUT"))
             .and(path(&content_route))
             .and(header("authorization", "Bearer fixture-access"))
             .and(header("content-type", "application/octet-stream"))
             .and(body_bytes(content.as_slice()))
-            .respond_with(ok(
-                json!({"phase":"EXECUTE","assetId":PREVIEW,"assetStatus":"PARSING"}),
-            ))
+            .respond_with(put_response)
             .expect(u64::from(same_origin))
             .mount(&server)
             .await;
@@ -193,7 +210,16 @@ async fn native_upload_streams_exact_bytes_only_to_the_bound_route() {
             Some(PREVIEW),
         )
         .await;
-        if same_origin {
+        if let Some(state) = recovered_state {
+            if state == "PARSING" {
+                assert_eq!(assert_output(output)["receipt"]["state"], state);
+            } else {
+                assert!(!output.status.success());
+                assert!(
+                    String::from_utf8_lossy(&output.stderr).contains("Upload was not confirmed")
+                );
+            }
+        } else if same_origin {
             assert_eq!(assert_output(output)["assetStatus"], "PARSING");
         } else {
             assert!(!output.status.success());
@@ -364,4 +390,39 @@ async fn estimate_prepare_query_submit_and_cancel_follow_the_confirmed_routes() 
             assert_eq!(assert_output(read)["preparationState"], "READY");
         }
     }
+}
+
+#[tokio::test]
+async fn campaign_status_accepts_an_operation_id_starting_with_a_dash() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.toml");
+    profile(&server, &config);
+    let operation_id = format!("-{}", "a".repeat(42));
+    Mock::given(method("GET"))
+        .and(path(format!("{ROOT}/campaigns/campaign-fixture")))
+        .and(query_param("operationId", &operation_id))
+        .respond_with(ok(
+            json!({"selectedOperation":{"operationId":operation_id}}),
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let output = run(
+        &config,
+        &[
+            "campaign",
+            "get",
+            "--campaign-id",
+            "campaign-fixture",
+            "--operation-id",
+            &operation_id,
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(
+        assert_output(output)["selectedOperation"]["operationId"],
+        operation_id
+    );
 }

@@ -42,7 +42,7 @@ pub struct CampaignWriteArgs {
 pub struct CampaignStatusArgs {
     #[arg(long)]
     pub campaign_id: String,
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     pub operation_id: Option<String>,
 }
 
@@ -84,7 +84,11 @@ pub struct TemplateGet {
         required_unless_present = "operation_id"
     )]
     template_id: Option<String>,
-    #[arg(long, required_unless_present = "template_id")]
+    #[arg(
+        long,
+        required_unless_present = "template_id",
+        allow_hyphen_values = true
+    )]
     operation_id: Option<String>,
 }
 
@@ -134,7 +138,7 @@ pub struct TemplateSubmit {
 #[derive(Debug, Clone, Subcommand)]
 pub enum AssetCommand {
     Get {
-        #[arg(long)]
+        #[arg(long, allow_hyphen_values = true)]
         asset_id: String,
     },
     Upload(AssetUpload),
@@ -618,7 +622,13 @@ async fn recovered(
     error: anyhow::Error,
 ) -> Result<()> {
     match read(client, token, path).await {
-        Ok(value) => print(json!({"recovered": true, "receipt": value})),
+        Ok(value) => match value.get("state").and_then(Value::as_str) {
+            Some("PARSING" | "READY") => print(json!({"recovered": true, "receipt": value})),
+            Some("FAILED" | "EXPIRED" | "RECEIVING") => {
+                Err(error.context("Upload was not confirmed. Query the existing asset receipt."))
+            }
+            _ => Err(error.context("Upload outcome is unknown. Query the existing asset receipt.")),
+        },
         Err(_) => {
             Err(error.context("Upload outcome is unknown. Query the existing asset receipt."))
         }

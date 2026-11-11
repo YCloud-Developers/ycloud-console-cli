@@ -483,21 +483,6 @@ mod tests {
             Cli::try_parse_from(["ycloud", "inbox", "conversations", "export", "--no-wait"])
                 .unwrap();
 
-        if let Command::Whatsapp {
-            command:
-                WhatsappCommand::Asset {
-                    command: whatsapp_campaign::AssetCommand::PairUpload(args),
-                },
-        } = &cli.command
-        {
-            return paired_upload::run(
-                cli.dashboard_url
-                    .as_deref()
-                    .unwrap_or(DEFAULT_DASHBOARD_URL),
-                args,
-            )
-            .await;
-        }
         preserve_idempotency_key(&mut cli.command);
         let cloned = cli.command.clone();
         let Command::Inbox {
@@ -529,21 +514,6 @@ mod tests {
             Cli::try_parse_from(["ycloud", "analytics", "templates", "export", "--no-wait"])
                 .unwrap();
 
-        if let Command::Whatsapp {
-            command:
-                WhatsappCommand::Asset {
-                    command: whatsapp_campaign::AssetCommand::PairUpload(args),
-                },
-        } = &cli.command
-        {
-            return paired_upload::run(
-                cli.dashboard_url
-                    .as_deref()
-                    .unwrap_or(DEFAULT_DASHBOARD_URL),
-                args,
-            )
-            .await;
-        }
         preserve_idempotency_key(&mut cli.command);
         let Command::Analytics {
             command:
@@ -573,21 +543,6 @@ mod tests {
         ])
         .unwrap();
 
-        if let Command::Whatsapp {
-            command:
-                WhatsappCommand::Asset {
-                    command: whatsapp_campaign::AssetCommand::PairUpload(args),
-                },
-        } = &cli.command
-        {
-            return paired_upload::run(
-                cli.dashboard_url
-                    .as_deref()
-                    .unwrap_or(DEFAULT_DASHBOARD_URL),
-                args,
-            )
-            .await;
-        }
         preserve_idempotency_key(&mut cli.command);
         let Command::Campaign {
             command: CampaignCommand::Export(args),
