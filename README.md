@@ -160,7 +160,10 @@ ycloud logout
 
 Inbox conversation search and export default to `--status all`. Use `--status open` or
 `--status closed` to select one state; the legacy aliases `1` (open) and `0` (closed) remain
-accepted.
+accepted. Filter conversations by human agent name or email with `--assignee-name` and
+`--assignee-email` (matching both `姓+名` and `名 姓` Chinese name orders). On
+`ycloud inbox conversations export`, add `--message-sender-name` or `--message-sender-email` to
+filter exported message JSONL rows to messages sent by matching human agents.
 
 Export creation waits by default, then downloads the independent ready artifacts. Use
 `--no-wait` to return the task ID immediately. `--archive` requests an additional ZIP when the
@@ -353,4 +356,4 @@ ycloud --dashboard-url https://open-platform-prepare.ycloud.com whatsapp asset p
   --content-type application/vnd.openxmlformats-officedocument.spreadsheetml.sheet --file audience.xlsx
 ```
 
-For an image used by a Campaign, choose `--purpose campaign-media --content-type image/png`. Use the Platform environment of your WorkBuddy connector. Share only the JSON printed by the CLI, confirm the upload in WorkBuddy, then paste the returned `assetId` into the same waiting terminal. WorkBuddy checks that the asset reaches `READY`. If the outcome is uncertain, check the existing asset before creating a new pairing.
+For an image used by a Campaign, choose `--purpose campaign-media --content-type image/png`. For a media header sample used when creating or updating a WhatsApp template, choose `--purpose template-sample` (`image/jpeg` or `image/png` up to 5 MiB, `video/mp4` up to 16 MiB, `application/pdf` up to 100 MiB). Use the Platform environment of your WorkBuddy connector. Share only the JSON printed by the CLI, confirm the upload in WorkBuddy, then paste the returned `assetId` into the same waiting terminal. WorkBuddy checks that the asset reaches `READY`. If the outcome is uncertain, check the existing asset before creating a new pairing.

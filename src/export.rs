@@ -82,7 +82,7 @@ pub async fn export_conversations(
 }
 
 fn conversation_export_request(args: &ConversationExportArgs) -> Value {
-    json!({
+    let mut body = json!({
         "filter": conversation_filter(&args.filter),
         "columns": args.columns,
         "format": args.format.as_api_value(),
@@ -92,6 +92,16 @@ fn conversation_export_request(args: &ConversationExportArgs) -> Value {
         "timezone": args.timezone,
         "fileName": args.file_name,
     })
+    .as_object()
+    .unwrap()
+    .clone();
+    insert_vec(&mut body, "messageSenderNames", &args.message_sender_names);
+    insert_vec(
+        &mut body,
+        "messageSenderEmails",
+        &args.message_sender_emails,
+    );
+    Value::Object(body)
 }
 
 pub async fn export_contacts(
@@ -406,6 +416,8 @@ fn conversation_filter(args: &ConversationFilterArgs) -> Value {
     let mut filter = Map::new();
     insert_vec(&mut filter, "inboxIds", &args.inbox_ids);
     insert_vec(&mut filter, "assigneeIds", &args.assignee_ids);
+    insert_vec(&mut filter, "assigneeNames", &args.assignee_names);
+    insert_vec(&mut filter, "assigneeEmails", &args.assignee_emails);
     insert_vec(
         &mut filter,
         "conversationTagIds",
@@ -579,6 +591,8 @@ mod tests {
         let request = conversation_export_request(&ConversationExportArgs {
             filter: ConversationFilterArgs::default(),
             columns: Vec::new(),
+            message_sender_names: Vec::new(),
+            message_sender_emails: Vec::new(),
             format: crate::cli::ExportFormat::Auto,
             no_contacts: false,
             archive: false,
@@ -596,6 +610,46 @@ mod tests {
 
         assert_eq!(request["includeMessages"], json!(true));
         assert_eq!(request["includeContacts"], json!(true));
+        assert!(request.get("messageSenderNames").is_none());
+        assert!(request.get("messageSenderEmails").is_none());
+    }
+
+    #[test]
+    fn conversation_filter_and_export_serialize_agent_and_sender_filters() {
+        let request = conversation_export_request(&ConversationExportArgs {
+            filter: ConversationFilterArgs {
+                assignee_names: vec!["牟秋越".to_string()],
+                assignee_emails: vec!["qiuyue.mu@example.com".to_string()],
+                ..ConversationFilterArgs::default()
+            },
+            columns: Vec::new(),
+            message_sender_names: vec!["牟秋越".to_string()],
+            message_sender_emails: vec!["qiuyue.mu@example.com".to_string()],
+            format: crate::cli::ExportFormat::Auto,
+            no_contacts: true,
+            archive: false,
+            timezone: "Asia/Shanghai".to_string(),
+            file_name: None,
+            idempotency_key: None,
+            wait: ExportWaitArgs {
+                no_wait: true,
+                output_dir: PathBuf::from("."),
+                artifacts: Vec::new(),
+                timeout_seconds: 3600,
+                json: false,
+            },
+        });
+
+        assert_eq!(request["filter"]["assigneeNames"], json!(["牟秋越"]));
+        assert_eq!(
+            request["filter"]["assigneeEmails"],
+            json!(["qiuyue.mu@example.com"])
+        );
+        assert_eq!(request["messageSenderNames"], json!(["牟秋越"]));
+        assert_eq!(
+            request["messageSenderEmails"],
+            json!(["qiuyue.mu@example.com"])
+        );
     }
 
     #[test]
