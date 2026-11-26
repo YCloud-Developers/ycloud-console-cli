@@ -490,6 +490,10 @@ pub struct ConversationFilterArgs {
     pub inbox_ids: Vec<String>,
     #[arg(long = "assignee-id", value_delimiter = ',')]
     pub assignee_ids: Vec<String>,
+    #[arg(long = "assignee-name", value_delimiter = ',')]
+    pub assignee_names: Vec<String>,
+    #[arg(long = "assignee-email", value_delimiter = ',')]
+    pub assignee_emails: Vec<String>,
     #[arg(long = "conversation-tag-id", value_delimiter = ',')]
     pub conversation_tag_ids: Vec<String>,
     #[arg(long = "contact-tag-id", value_delimiter = ',')]
@@ -561,6 +565,18 @@ pub struct ConversationExportArgs {
     pub filter: ConversationFilterArgs,
     #[arg(long, value_delimiter = ',')]
     pub columns: Vec<String>,
+    #[arg(
+        long = "message-sender-name",
+        value_delimiter = ',',
+        help = "Export only agent messages sent by matching agent names"
+    )]
+    pub message_sender_names: Vec<String>,
+    #[arg(
+        long = "message-sender-email",
+        value_delimiter = ',',
+        help = "Export only agent messages sent by matching agent emails"
+    )]
+    pub message_sender_emails: Vec<String>,
     #[arg(long, value_enum, default_value_t = ExportFormat::Auto)]
     pub format: ExportFormat,
     #[arg(long, help = "Do not generate the related contacts artifact")]
@@ -1250,6 +1266,26 @@ mod tests {
         assert_eq!(args.filter.message_types.len(), 2);
         assert_eq!(args.filter.waba_ids, ["waba-1", "waba-2"]);
         assert!(args.json);
+    }
+
+    #[test]
+    fn contact_export_rejects_message_sender_flags() {
+        assert!(Cli::try_parse_from([
+            "ycloud",
+            "contacts",
+            "export",
+            "--message-sender-name",
+            "牟秋越",
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from([
+            "ycloud",
+            "contacts",
+            "export",
+            "--message-sender-email",
+            "agent@ycloud.com",
+        ])
+        .is_err());
     }
 
     #[test]

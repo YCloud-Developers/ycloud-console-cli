@@ -27,10 +27,11 @@ pub struct PairUpload {
     waba_id: String,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Purpose {
     Audience,
     CampaignMedia,
+    TemplateSample,
 }
 
 #[derive(Deserialize)]
@@ -58,10 +59,7 @@ pub async fn run(origin: &str, args: &PairUpload) -> Result<()> {
     if !valid_waba(&args.waba_id) || !valid_content_type(&args.content_type) {
         bail!("Expected a numeric WABA ID and a plain media type");
     }
-    let (purpose, limit) = match args.purpose {
-        Purpose::Audience => ("AUDIENCE", 15 * 1024 * 1024),
-        Purpose::CampaignMedia => ("CAMPAIGN_MEDIA", 100 * 1024 * 1024),
-    };
+    let (purpose, limit) = purpose_and_limit(args.purpose, &args.content_type)?;
     let file_name = args
         .file
         .file_name()
@@ -218,10 +216,84 @@ fn valid_content_type(value: &str) -> bool {
         })
 }
 
+fn purpose_and_limit(purpose: Purpose, content_type: &str) -> Result<(&'static str, u64)> {
+    match purpose {
+        Purpose::Audience => Ok(("AUDIENCE", 15 * 1024 * 1024)),
+        Purpose::CampaignMedia => Ok(("CAMPAIGN_MEDIA", 100 * 1024 * 1024)),
+        Purpose::TemplateSample => match content_type {
+            "image/jpeg" | "image/png" => Ok(("TEMPLATE_SAMPLE", 5 * 1024 * 1024)),
+            "video/mp4" => Ok(("TEMPLATE_SAMPLE", 16 * 1024 * 1024)),
+            "application/pdf" => Ok(("TEMPLATE_SAMPLE", 100 * 1024 * 1024)),
+            _ => bail!(
+                "Template sample upload supports only image/jpeg, image/png, video/mp4, or application/pdf"
+            ),
+        },
+    }
+}
+
 fn rejected(response: Response, action: &str) -> Result<()> {
     // The endpoint never needs to surface the response body, which could contain a credential.
     bail!(
         "{action} failed (HTTP {}). Check the same asset in WorkBuddy; the CLI will not retry automatically.",
         response.status().as_u16()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn template_sample_enforces_mime_specific_limits() {
+        assert_eq!(
+            purpose_and_limit(Purpose::TemplateSample, "image/jpeg").unwrap(),
+            ("TEMPLATE_SAMPLE", 5 * 1024 * 1024)
+        );
+        assert_eq!(
+            purpose_and_limit(Purpose::TemplateSample, "image/png").unwrap(),
+            ("TEMPLATE_SAMPLE", 5 * 1024 * 1024)
+        );
+        assert_eq!(
+            purpose_and_limit(Purpose::TemplateSample, "video/mp4").unwrap(),
+            ("TEMPLATE_SAMPLE", 16 * 1024 * 1024)
+        );
+        assert_eq!(
+            purpose_and_limit(Purpose::TemplateSample, "application/pdf").unwrap(),
+            ("TEMPLATE_SAMPLE", 100 * 1024 * 1024)
+        );
+        assert!(purpose_and_limit(Purpose::TemplateSample, "image/gif").is_err());
+    }
+
+    #[test]
+    fn cli_accepts_template_sample_purpose_for_pair_upload() {
+        let parsed = crate::cli::Cli::try_parse_from([
+            "ycloud",
+            "whatsapp",
+            "asset",
+            "pair-upload",
+            "--purpose",
+            "template-sample",
+            "--waba-id",
+            "123456",
+            "--content-type",
+            "image/png",
+            "--file",
+            "sample.png",
+        ])
+        .unwrap();
+        match parsed.command {
+            crate::cli::Command::Whatsapp {
+                command:
+                    crate::cli::WhatsappCommand::Asset {
+                        command: crate::whatsapp_campaign::AssetCommand::PairUpload(args),
+                    },
+            } => {
+                assert_eq!(args.purpose, Purpose::TemplateSample);
+                assert_eq!(args.waba_id, "123456");
+                assert_eq!(args.content_type, "image/png");
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
 }
